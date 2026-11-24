@@ -4,7 +4,7 @@
 
 **开源免费 · 面向中国大陆零跑车主的第三方车辆助手**
 
-用手机看车况、远程控车、记录行程和充电，也可以把同一辆车的 Home Assistant（HA）历史记录同步到手机。LeapMore 可以免费下载和使用，项目代码按 [GNU GPL v3.0](LICENSE)（GPL-3.0-only）发布。版权所有 © 2026 MiRaToo。
+用手机看车况、远程控车、记录行程和充电，也可以把同一辆车的 Home Assistant（HA）历史记录同步到手机。LeapMore 可以免费下载和使用，项目代码按 [GNU GPL v3.0](LICENSE)（GPL-3.0-only）发布。
 
 ## 下载与安装
 
