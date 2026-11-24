@@ -1,0 +1,4 @@
+<appwidget-provider xmlns:android="http://schemas.android.com/apk/res/android"
+    android:minWidth="230dp" android:minHeight="105dp" android:targetCellWidth="4" android:targetCellHeight="2"
+    android:widgetCategory="home_screen" android:initialLayout="@layout/leap_widget"
+    android:updatePeriodMillis="1800000" />

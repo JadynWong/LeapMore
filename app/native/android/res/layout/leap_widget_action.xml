@@ -1,0 +1,6 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_action"
+    android:layout_width="0dp" android:layout_height="44dp" android:layout_weight="1" android:layout_marginHorizontal="3dp"
+    android:orientation="vertical" android:gravity="center" android:background="@drawable/leap_widget_action">
+    <ImageView android:id="@+id/widget_icon" style="@style/LeapWidgetIcon" android:layout_width="20dp" android:layout_height="20dp" />
+    <TextView android:id="@+id/widget_label" style="@style/LeapWidgetLabel" android:layout_marginTop="3dp" />
+</LinearLayout>

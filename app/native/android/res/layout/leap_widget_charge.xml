@@ -1,0 +1,10 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_charge_row"
+    android:layout_width="wrap_content" android:layout_height="wrap_content" android:gravity="center_vertical">
+    <LinearLayout android:id="@+id/widget_chip" android:layout_width="wrap_content" android:layout_height="19dp"
+        android:gravity="center_vertical" android:paddingHorizontal="4dp" android:background="@drawable/leap_widget_action">
+        <ImageView android:id="@+id/widget_icon" style="@style/LeapWidgetIcon" android:layout_width="12dp" android:layout_height="12dp" />
+        <TextView android:id="@+id/widget_label" style="@style/LeapWidgetLabel" android:layout_marginStart="3dp"
+            android:textSize="10sp" android:textStyle="bold" />
+    </LinearLayout>
+    <TextView android:id="@+id/widget_detail" style="@style/LeapWidgetLabel" android:layout_marginStart="5dp" android:textStyle="bold" />
+</LinearLayout>

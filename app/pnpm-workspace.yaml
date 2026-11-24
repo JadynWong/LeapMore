@@ -1,0 +1,8 @@
+packages:
+  - .
+allowBuilds:
+  esbuild: true
+  # hionic's project generation does not require package postinstall hooks.
+  node-gyp-build: false
+  sharp: false
+  core-js: false

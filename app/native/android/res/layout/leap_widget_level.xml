@@ -1,0 +1,8 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent" android:layout_height="wrap_content" android:layout_marginBottom="4dp" android:gravity="center_vertical">
+    <ImageView android:id="@+id/widget_icon" style="@style/LeapWidgetIcon" />
+    <TextView android:id="@+id/widget_label" style="@style/LeapWidgetLabel" android:layout_marginStart="4dp" />
+    <ImageView android:id="@+id/widget_level_bar" style="@style/LeapWidgetIcon" android:layout_width="0dp" android:layout_height="5dp"
+        android:layout_weight="1" android:layout_marginHorizontal="6dp" android:scaleType="fitXY" />
+    <TextView android:id="@+id/widget_detail" style="@style/LeapWidgetLabel" android:minWidth="28dp" android:gravity="end" android:textStyle="bold" />
+</LinearLayout>

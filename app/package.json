@@ -1,0 +1,54 @@
+{
+  "name": "leapmore",
+  "version": "0.1.0",
+  "private": true,
+  "license": "GPL-3.0-only",
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/assets.mjs && vite --host 127.0.0.1",
+    "typecheck": "tsc --noEmit",
+    "build": "node scripts/assets.mjs && tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "test": "node --experimental-strip-types --test tests/*.test.ts",
+    "test:browser": "node tests/browser-demo.mjs",
+    "test:features": "node tests/browser-features.mjs",
+    "test:session": "node tests/browser-local-session.mjs",
+    "test:ha": "node tests/browser-ha.mjs",
+    "mock:ha": "node tests/mock-ha.mjs",
+    "native:android": "node scripts/native.mjs android",
+    "native:ios": "node scripts/native.mjs ios",
+    "native:harmony": "node scripts/native.mjs harmony"
+  },
+  "dependencies": {
+    "@capacitor/android": "8.6.2",
+    "@capacitor/app": "^8.0.0",
+    "@capacitor/browser": "^8.0.0",
+    "@capacitor/core": "8.6.2",
+    "@capacitor/filesystem": "^8.0.0",
+    "@capacitor/ios": "8.6.2",
+    "@tanstack/react-query": "^5.90.0",
+    "blueimp-md5": "^2.19.0",
+    "fflate": "^0.8.2",
+    "jsencrypt": "^3.3.2",
+    "react": "^18.3.1",
+    "react-dom": "^18.3.1",
+    "react-router-dom": "^6.30.0"
+  },
+  "devDependencies": {
+    "@capacitor-ohos/filesystem": "8.0.2",
+    "@capacitor-ohos/ohos": "8.0.2",
+    "@capacitor/cli": "8.6.2",
+    "@types/blueimp-md5": "^2.18.2",
+    "@types/node": "^22.0.0",
+    "@types/react": "^18.3.0",
+    "@types/react-dom": "^18.3.0",
+    "@vitejs/plugin-react": "^4.7.0",
+    "hionic": "2.1.16",
+    "typescript": "^5.9.0",
+    "vite": "^6.4.0",
+    "ws": "^8.18.0"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

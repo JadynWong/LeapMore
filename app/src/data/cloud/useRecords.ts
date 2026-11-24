@@ -1,0 +1,95 @@
+import { useEffect, useMemo, useRef, useState } from 'react';
+import { useQuery } from '@tanstack/react-query';
+import { deleteDataset, readDataset, saveDataset, updateDataset } from '../localDatabase';
+import type { CarState } from '../types';
+import type { Charge, Frame } from '../ha/measurements';
+import { deriveTrips, drivingOf, numberOf } from '../ha/measurements';
+import type { LiveVehicleClient } from './LiveClient';
+import { appendCloudFrame, cloudFrame } from './records';
+import { reconcileCharges, sampledCharges } from './charges';
+import type { VehicleEnergySettings } from '../vehicleEnergy';
+
+const empty: Frame[] = [];
+const chargeCacheTime = 6 * 60 * 60_000;
+type ChargeCache = { at: number; rows: Charge[] };
+
+export function useCloudRecords(key: string, vehicle: string, client: LiveVehicleClient | null,
+  enabled: boolean, location: boolean, state: CarState | undefined, settings: VehicleEnergySettings, observedAt: number) {
+  const frameKey = 'cloud-frames:' + key;
+  const chargeKey = 'cloud-charges:' + key;
+  const [saved, setSaved] = useState<{ key: string; frames: Frame[] }>();
+  const [issue, setIssue] = useState('');
+  const writing = useRef(Promise.resolve());
+  const blocked = useRef(false);
+
+  useEffect(() => {
+    if (!enabled) return;
+    let current = true;
+    blocked.current = false;
+    setIssue('');
+    void writing.current.catch(() => {}).then(() => readDataset<Frame[]>(frameKey)).then(frames => {
+      if (current && !blocked.current) setSaved({ key: frameKey, frames: frames ?? empty });
+    }).catch(() => { if (current) setIssue('无法读取本机车况采样。'); });
+    return () => { current = false; };
+  }, [enabled, frameKey]);
+
+  useEffect(() => {
+    if (!enabled || blocked.current || saved?.key !== frameKey || !state || state.vehicleId !== vehicle) return;
+    const frame = cloudFrame(state, location);
+    if (!frame) return;
+    const frames = appendCloudFrame(saved.frames, frame);
+    if (frames === saved.frames) return;
+    setSaved({ key: frameKey, frames });
+    writing.current = writing.current.catch(() => {}).then(async () => {
+      await updateDataset<Frame[]>(frameKey, prior => appendCloudFrame(prior ?? saved.frames, frame));
+    });
+    void writing.current.catch(() => setIssue('无法保存本机车况采样。'));
+  }, [enabled, frameKey, location, saved, state, vehicle]);
+
+  const charges = useQuery({ queryKey: ['cloud', 'charges', key], enabled, staleTime: chargeCacheTime, retry: false,
+    queryFn: async ({ signal }) => {
+      const rows = await client!.getCharges(vehicle, signal);
+      signal.throwIfAborted();
+      await saveDataset(chargeKey, { at: Date.now(), rows }).catch(() => {});
+      return rows;
+    }, refetchInterval: chargeCacheTime });
+  const cachedCharges = useQuery({ queryKey: ['cloud', 'cached-charges', key], enabled, staleTime: Infinity,
+    queryFn: () => readDataset<ChargeCache>(chargeKey).then(value => value ?? null) });
+  const frames = enabled && saved?.key === frameKey ? saved.frames : empty;
+  const trips = useMemo(() => deriveTrips(frames, 'live', settings.capacityKwh), [frames, settings.capacityKwh]);
+  const localCharges = useMemo(() => sampledCharges(frames, settings.capacityKwh, Date.now()),
+    [frames, settings.capacityKwh, observedAt]);
+  const latestFrame = frames.at(-1);
+  const liveFrame = latestFrame && Date.now() - latestFrame.at <= 90_000 ? latestFrame : undefined;
+  const trip = trips[0];
+  const activeTrip = liveFrame && trip?.endedAt === null && drivingOf(liveFrame.data) === true ? {
+    id: trip.id,
+    speedKmh: numberOf(liveFrame.data.speed),
+    distanceKm: trip.distanceKm ?? (trip.startedAt === liveFrame.at && numberOf(liveFrame.data.odometer) !== null ? 0 : null),
+  } : null;
+  const session = localCharges.at(-1);
+  const activeCharge = liveFrame?.data.charge === 'charging' && session?.active ? {
+    soc: session.socEnd,
+    kwh: session.kwh ?? (settings.capacityKwh !== null && session.socStart !== null && session.socStart === session.socEnd ? 0 : null),
+    powerKw: session.powerTimeline?.at(-1)?.value,
+  } : null;
+  const official = enabled ? charges.data ?? cachedCharges.data?.rows : undefined;
+  const rows = useMemo(() => reconcileCharges(official ?? [], localCharges, settings), [official, localCharges, settings]);
+  const latestCharge = useRef({ key, state: state?.charging });
+  const refetch = charges.refetch;
+  useEffect(() => {
+    const previous = latestCharge.current;
+    latestCharge.current = { key, state: state?.charging };
+    if (enabled && previous.key === key && previous.state === 'charging' && state?.charging && !['unknown', 'charging'].includes(state.charging)) {
+      void refetch({ cancelRefetch: false });
+    }
+  }, [enabled, key, state?.charging, refetch]);
+  async function clear() {
+    blocked.current = true;
+    await writing.current.catch(() => {});
+    setSaved(undefined);
+    if (key) await Promise.all([deleteDataset(frameKey), deleteDataset(chargeKey), deleteDataset('cloud-energy:' + key)]);
+  }
+  return { trips, charges: rows, activeTrip, activeCharge, loading: enabled && charges.isFetching,
+    error: charges.error, issue, clear, refreshCharges: refetch };
+}

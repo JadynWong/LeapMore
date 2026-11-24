@@ -1,0 +1,36 @@
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android" android:id="@+id/widget_root"
+    android:layout_width="match_parent" android:layout_height="match_parent" android:orientation="vertical"
+    android:padding="12dp" android:background="@drawable/leap_widget_bg">
+    <LinearLayout android:layout_width="match_parent" android:layout_height="0dp" android:layout_weight="1"
+        android:orientation="vertical">
+        <LinearLayout android:layout_width="match_parent" android:layout_height="wrap_content" android:gravity="center_vertical" android:baselineAligned="false">
+            <LinearLayout android:layout_width="wrap_content" android:layout_height="wrap_content" android:orientation="vertical">
+                <TextView android:id="@+id/widget_range" style="@style/LeapWidgetReading" android:text="— km" />
+                <TextView android:id="@+id/widget_range_label" style="@style/LeapWidgetLabel" android:text="续航" />
+                <TextView android:id="@+id/widget_status" style="@style/LeapWidgetLabel" android:layout_marginTop="2dp" android:visibility="gone" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/widget_soc_group" android:layout_width="0dp" android:layout_height="wrap_content"
+                android:layout_weight="1" android:layout_marginStart="5dp" android:gravity="center_horizontal" android:orientation="vertical">
+                <TextView android:id="@+id/widget_soc" style="@style/LeapWidgetReading" android:text="—" />
+                <TextView android:id="@+id/widget_soc_label" style="@style/LeapWidgetLabel" android:text="电量" />
+            </LinearLayout>
+            <LinearLayout android:id="@+id/widget_car_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                android:layout_marginStart="3dp" android:gravity="end" android:orientation="vertical" android:visibility="gone">
+                <ImageView android:id="@+id/widget_car_medium" style="@style/LeapWidgetIcon" android:layout_width="72dp" android:layout_height="32dp"
+                    android:scaleType="fitEnd" />
+                <LinearLayout android:id="@+id/widget_charge_side" android:layout_width="wrap_content" android:layout_height="wrap_content"
+                    android:layout_marginTop="2dp" />
+            </LinearLayout>
+            <ImageView android:id="@+id/widget_car_large" style="@style/LeapWidgetIcon" android:layout_width="0dp" android:layout_height="54dp"
+                android:layout_weight="1" android:layout_marginStart="10dp" android:scaleType="fitEnd" android:visibility="gone" />
+        </LinearLayout>
+        <LinearLayout android:id="@+id/widget_levels" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="4dp" android:orientation="vertical" android:visibility="gone" />
+        <LinearLayout android:id="@+id/widget_charge_main" android:layout_width="match_parent" android:layout_height="wrap_content"
+            android:layout_marginTop="5dp" />
+    </LinearLayout>
+    <LinearLayout android:id="@+id/widget_metrics" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="4dp" android:baselineAligned="false" android:visibility="gone" />
+    <LinearLayout android:id="@+id/widget_actions" android:layout_width="match_parent" android:layout_height="wrap_content"
+        android:layout_marginTop="5dp" android:baselineAligned="false" />
+</LinearLayout>

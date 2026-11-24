@@ -1,0 +1,17 @@
+node_modules/
+dist/
+.env.local
+.env.*.local
+/android/
+/ios/
+/openharmony/
+public/car3d-demo
+public/assets/b10.png
+public/assets/c10.png
+public/assets/hero-day.png
+public/assets/hero-night.png
+public/assets/leaplink-icon.png
+public/assets/leaplink-icon-simple.png
+public/assets/leaplink-lockup.png
+public/assets/wechat-reward-qr.png
+public/viewer/textures/skybox_night_starry.jpg
