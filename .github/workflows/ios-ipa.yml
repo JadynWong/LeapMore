@@ -40,6 +40,11 @@ jobs:
           mkdir Payload
           ditto leapmore-ios/Build/Products/Release-iphoneos/App.app Payload/App.app
           app=Payload/App.app
+          widget_name=$(/usr/libexec/PlistBuddy -c 'Print CFBundleName' "$app/PlugIns/LeapWidget.appex/Info.plist")
+          if [[ -z "$widget_name" ]]; then
+            echo "::error::LeapWidget extension has an empty CFBundleName"
+            exit 1
+          fi
           executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")
           lipo "$app/$executable" -verify_arch arm64
           xcrun vtool -arch arm64 -show-build "$app/$executable" | grep -Eq 'platform[[:space:]]+IOS$'
