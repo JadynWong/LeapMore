@@ -5,7 +5,7 @@ import { isIP } from 'node:net';
 
 process.chdir(resolve(import.meta.dirname, '..'));
 const platform = process.argv[2];
-const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+const { version, buildNumber } = JSON.parse(readFileSync('package.json', 'utf8'));
 function run(command, args) {
   const result = spawnSync(command, args, { stdio: 'inherit' });
   if (result.status !== 0) throw new Error('命令失败：' + command + ' ' + args[0]);
@@ -49,7 +49,7 @@ if (platform === 'android') {
       xml = xml.replace('</manifest>', '    <uses-permission android:name="android.permission.USE_BIOMETRIC" />\n    <uses-permission android:name="android.permission.USE_FINGERPRINT" android:maxSdkVersion="29" />\n</manifest>');
     }
     xml = xml.replace(/^[ \t]*<uses-permission android:name="android\.permission\.(ACCESS_COARSE_LOCATION|ACCESS_FINE_LOCATION|FOREGROUND_SERVICE_LOCATION)"\s*\/>\s*?\n/gm, '');
-    for (const permission of ['FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC', 'POST_NOTIFICATIONS', 'WAKE_LOCK']) {
+    for (const permission of ['ACCESS_NETWORK_STATE', 'FOREGROUND_SERVICE', 'FOREGROUND_SERVICE_DATA_SYNC', 'POST_NOTIFICATIONS', 'WAKE_LOCK']) {
       if (!xml.includes('android.permission.' + permission + '"')) {
         xml = xml.replace('</manifest>', '    <uses-permission android:name="android.permission.' + permission + '" />\n</manifest>');
       }
@@ -93,7 +93,8 @@ if (platform === 'android') {
         </receiver>`).join('\n') + '\n    </application>');
     return xml;
   });
-  edit('android/app/build.gradle', source => source.replace(/versionName\s+"[^"]+"/, `versionName "${version}"`));
+  edit('android/app/build.gradle', source => source.replace(/versionName\s+"[^"]+"/, `versionName "${version}"`)
+    .replace(/versionCode\s+\d+/, `versionCode ${buildNumber}`));
 } else if (platform === 'ios') {
   if (!existsSync('ios/App')) js(cap, 'add', 'ios', '--packagemanager', 'SPM');
   js(cap, 'sync', 'ios');

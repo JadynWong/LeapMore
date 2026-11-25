@@ -1,3 +1,4 @@
+import { ServiceFailure } from '../serviceFailure.ts';
 import type { CarState } from '../types.ts';
 
 const fast = 6_000;
@@ -7,8 +8,8 @@ const cooldown = 15 * 60_000;
 const launchWindow = 10 * 60_000;
 const shortStopWindow = 5 * 60_000;
 
-export class CloudRateLimited extends Error {
-  constructor() { super('零跑云当前限制查询频率。'); }
+export class CloudRateLimited extends ServiceFailure {
+  constructor(status?: number, code?: number) { super('rate', status, code); }
 }
 
 export const vehicleRateLimited = (response: Record<string, unknown>) =>

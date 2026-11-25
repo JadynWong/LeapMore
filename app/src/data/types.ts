@@ -1,3 +1,5 @@
+import type { RangeReadings } from './powertrain.ts';
+
 /** 跨 UI 与数据层的稳定领域类型；真实字段以协议校对表为准。 */
 export type DataSource = 'fixture' | 'live' | 'replay' | 'ha' | 'phone';
 export type Powertrain = 'bev' | 'reev';
@@ -10,7 +12,7 @@ export interface Vehicle {
   nickname: string;
   model: string;
   year: number;
-  powertrain: Powertrain;
+  declaredPowertrain?: Powertrain;
   source: DataSource;
   shared?: boolean;
   carType?: string;
@@ -35,6 +37,7 @@ export interface CarState {
   rangeKm: number | null;
   fuelPercent: number | null;
   fuelRangeKm: number | null;
+  rangeReadings?: RangeReadings;
   locked: boolean | null;
   trunkOpen: boolean | null;
   windowOpen: boolean | null;

@@ -19,11 +19,15 @@ import { useHA } from '../data/useHA';
 import { useBackgroundVehicleRecorder } from '../data/phone';
 import { deleteDataset, readDataset, updateDataset } from '../data/localDatabase';
 import { clearLegacyPhoneRecording } from '../platform/recorder';
+import { failureFacts, failureLabels } from '../data/serviceFailure';
+import { readFailure, rememberFailure } from '../data/readDiagnostics';
 import { clearCloud, cloudClient, loadCloudSession, rememberCloudVehicles } from './account/session';
 import { widgetBridge } from '../platform/widgets';
 import { forgetOperationPin } from '../platform/operationAuth';
 import { defaultVehicleEnergy } from '../data/vehicleEnergy';
 import { vehicleBatteryPacks } from '../data/batteryPacks';
+import { usePowertrain } from './vehicle/usePowertrain';
+import { displayedRange } from '../data/powertrain';
 import type { VehicleEnergySettings } from '../data/vehicleEnergy';
 
 export type Mode = 'demo' | 'cloud' | 'ha';
@@ -98,9 +102,13 @@ function useModel(widgetControl: boolean) {
     return () => { live = false; };
   }, [mode, cloud]);
   const client = useMemo(() => mode === 'cloud' && cloud ? cloudClient(cloud) : null, [mode, cloud]);
+  const profileScope = mode === 'cloud' && cloud ? 'cloud:' + cloud.account.userId : mode ?? 'local';
   const cloudVehicles = useQuery({
     queryKey: ['cloud', 'vehicles', cloud?.deviceId, cloud?.account.userId],
-    enabled: !!client, queryFn: () => client!.getVehicles(), staleTime: 60_000,
+    enabled: !!client, networkMode: 'always', queryFn: async ({ signal }) => {
+      try { return await client!.getVehicles(); }
+      catch (error) { if (!signal.aborted) rememberFailure(profileScope, 'list', error); throw error; }
+    }, staleTime: 60_000,
   });
   useEffect(() => {
     if (mode === 'cloud' && cloud && cloudVehicles.data) void rememberCloudVehicles(cloud, cloudVehicles.data).catch(() => {});
@@ -174,6 +182,7 @@ function useModel(widgetControl: boolean) {
     queryFn: async ({ signal }) => {
       vehiclePolling.beforeRequest();
       const next = await readCloudState(signal).catch(error => {
+        if (!signal.aborted) rememberFailure(cloudKey, 'state', error);
         if (error instanceof CloudRateLimited) vehiclePolling.rateLimit();
         throw error;
       });
@@ -187,8 +196,9 @@ function useModel(widgetControl: boolean) {
       return recordCloud || vehiclePolling.limited() ? vehiclePolling.delay() : 30_000;
     },
   });
-  const isReev = vehicle?.powertrain === 'reev' || cloudState.data?.fuelPercent != null;
-  const batteryPacks = useMemo(() => vehicleBatteryPacks(vehicle, isReev ? 'reev' : undefined), [vehicle, isReev]);
+  const powertrainInfo = usePowertrain(mode === 'cloud' ? operationScope : '', vehicle, mode === 'cloud' ? cloudState.data : undefined);
+  const batteryType = mode === 'cloud' && powertrainInfo.reason !== 'no-fuel-range-evidence' ? powertrainInfo.type : undefined;
+  const batteryPacks = useMemo(() => vehicleBatteryPacks(vehicle, batteryType), [vehicle, batteryType]);
   function vehicleEnergyScope(car: Vehicle | undefined) {
     if (!car) return '';
     if (mode === 'demo') return 'demo:' + car.id;
@@ -246,13 +256,17 @@ function useModel(widgetControl: boolean) {
   const statusTime = liveState?.updatedAt;
   const stale = !!statusTime && Date.now() - statusTime > 30 * 60_000;
   const soc = simulated ? 42 : liveState?.soc ?? null;
-  const powertrain = simulated ? debug.powertrain : isReev ? 'reev' : 'bev';
+  const powertrain = simulated ? debug.powertrain : powertrainInfo.type;
+  const ranges = liveState?.rangeReadings;
+  const range = displayedRange(powertrain, ranges);
   const current = {
     soc,
     powertrain,
-    range: simulated ? powertrain === 'reev' ? 362 : 195 : liveState?.rangeKm ?? null,
-    fuel: simulated ? 38 : liveState?.fuelPercent ?? null,
-    fuelRange: simulated ? 420 : liveState?.fuelRangeKm ?? null,
+    range: simulated ? powertrain === 'reev' ? 782 : 195 : range.km,
+    electricRange: simulated ? powertrain === 'reev' ? 362 : 195 : powertrain === 'bev' ? range.km : ranges?.ev ?? ranges?.live ?? null,
+    rangeLabel: powertrain === 'bev' ? '续航' : simulated || range.source === 'combined' || range.source === 'total' ? '综合续航' : '续航',
+    fuel: powertrain === 'bev' ? null : simulated ? 38 : liveState?.fuelPercent ?? null,
+    fuelRange: powertrain === 'bev' ? null : simulated ? 420 : liveState?.fuelRangeKm ?? null,
     locked: simulated ? true : liveState?.locked ?? null,
     trunkOpen: liveState?.trunkOpen ?? null,
     windowOpen: liveState?.windowOpen ?? null,
@@ -359,7 +373,7 @@ function useModel(widgetControl: boolean) {
     if (mode === 'cloud' && client && !expired) {
       const result = await cloudState.refetch({ cancelRefetch: false });
       if (notify && !(result.error instanceof CloudSessionExpired)) {
-        setToast(result.error ? '刷新失败，显示上次车况' : (result.data?.reportedAt ?? result.data?.updatedAt) === vehicleReport ? '已查询，车辆暂无新上报' : '车况已更新');
+        setToast(result.error ? failureLabels[failureFacts(result.error).kind] + (result.data ? '，显示上次车况' : '，暂无车况') : (result.data?.reportedAt ?? result.data?.updatedAt) === vehicleReport ? '已查询，车辆暂无新上报' : '车况已更新');
       }
       return;
     }
@@ -382,9 +396,9 @@ function useModel(widgetControl: boolean) {
 
   return {
     mode, booted, vehicle, vehicles, vehicleId, setVehicleId, name, source, setSource, usesPhone, usesHA, theme, setTheme, themeAccent, setThemeAccent,
-    profileScope: mode === 'cloud' && cloud ? 'cloud:' + cloud.account.userId : mode ?? 'local', accountMaskedPhone: cloud?.account.maskedPhone,
+    profileScope, accountMaskedPhone: cloud?.account.maskedPhone,
     colorScheme, systemColorScheme: preferredTheme, tariff, baseTariff, setTariff,
-    batteryPacks, energySettings,
+    batteryPacks, energySettings, powertrainInfo, rangeSource: range.source, rangeReadings: ranges,
     shouldGuideBatterySetup: (car: Vehicle) =>
       mode === 'cloud' && !!cloud && !expired && (!car.shared || car.grants?.mileage === true) &&
       !Object.hasOwn(vehicleEnergySettings, vehicleEnergyScope(car)),
@@ -403,6 +417,19 @@ function useModel(widgetControl: boolean) {
     findCharge: (id?: string) => records.charges.find(row => row.id === id || !!id &&
       (row.sampledId === id || combinedCharges?.aliases.get(row.id)?.includes(id))),
     favorites, paint, hasCustomPaint: !!paintSets[currentId], toast, setToast, refresh, refreshing: cloudState.isFetching,
+    stateFailure: cloudState.isError ? failureLabels[failureFacts(cloudState.error).kind] : '',
+    cloudDiagnostics: {
+      listStatus: cloudVehicles.status, listLastSuccess: cloudVehicles.dataUpdatedAt, listFailure: () => readFailure(profileScope, 'list'),
+      stateStatus: cloudState.status, stateLastSuccess: cloudState.dataUpdatedAt, stateFailure: () => readFailure(cloudKey, 'state'),
+      readList: async () => {
+        const result = await cloudVehicles.refetch({ cancelRefetch: false, throwOnError: true });
+        return { result: '成功 · ' + (result.data?.length ?? 0) + ' 辆授权车辆' };
+      },
+      readState: async () => {
+        await cloudState.refetch({ cancelRefetch: false, throwOnError: true });
+        return { result: '成功' };
+      },
+    },
     controlStateReady: cloudState.isSuccess,
     tireRange, tireAlerts, setTireRange: (range: typeof tireRange) => setTireRanges(all => ({ ...all, [tireRangeKey]: range })),
     controlClient, showControlState, showConfirmedControl, refreshChargePlan, expireCloud: () => setCloudExpired(true),

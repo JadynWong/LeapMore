@@ -19,7 +19,7 @@ export type Command = { kind: RemoteCommand['kind']; title: string; description?
 const status = {
   sending: '正在发送', accepted: '云端已受理', waiting: '等待车辆确认',
   confirmed: '操作成功 · 车端已确认', saved: '云端充电计划已更新', preheatSaved: '云端预热预约已更新',
-  unconfirmed: '车辆未确认', failed: '网络不可用，发送失败',
+  unconfirmed: '车辆未确认', failed: '指令发送失败',
 } as const;
 type Step = keyof typeof status;
 type AuthMethod = 'password' | 'saved' | 'biometrics';
@@ -73,7 +73,7 @@ function useCommandModel(onClose?: () => void) {
     const m = latest.current;
     if (m.expired) return ['会话已失效', '/login', '重新登录'] as const;
     if (!m.vehicle) return ['没有已授权的车辆', '/vehicle-access', '查看车辆授权'] as const;
-    if (m.scenario === 'offline') return ['网络不可用，显示缓存车况', '/states', '查看状态'] as const;
+    if (m.scenario === 'offline') return [m.simulated ? '网络不可用，显示缓存车况' : m.stateFailure + (m.current.at ? '，显示上次车况' : '，暂无车况'), '/states', '查看诊断'] as const;
     if (m.current.driving) return ['行驶中，停车挂 P 后可控车', '/driving-lock', '查看原因'] as const;
     if (kind !== 'lock' && !m.canSee('control')) return ['车辆控制未授权', '/vehicle-access', '查看车辆授权'] as const;
     if (kind === 'preheat' && !allowsPreheat(m.vehicle)) return ['电池预热预约未授权', '/vehicle-access', '查看车辆授权'] as const;

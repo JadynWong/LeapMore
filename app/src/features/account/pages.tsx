@@ -4,8 +4,9 @@ import { useModelContext } from '../context';
 import { authorizeCloud, hasCloudSession, loadCloudSession } from './session';
 import { sendSmsCode } from '../../data/cloud/LiveClient';
 import { randomDeviceId } from '../../data/cloud/liveCrypto';
+import { rememberFailure } from '../../data/readDiagnostics';
 import { LocalSessionStorageError } from '../../platform/secure';
-import { AppBar, Hint, Row, Section, Sheet, SheetButtons, asset, hasLocalCarAssets } from '../../ui/components';
+import { AppBar, Hint, Row, Section, Seg, Sheet, SheetButtons, asset, hasLocalCarAssets } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
 import type { IconName } from '../../ui/Icon';
 import { capacityLimits, formatBatteryCapacity, validChargeEfficiency } from '../../data/vehicleEnergy';
@@ -50,7 +51,7 @@ export function Login() {
       setSentTo(form.phone);
       setResend(60);
       setNote('验证码已发送。');
-    } catch { setNote('验证码发送失败，请检查网络或稍后重试。'); }
+    } catch (error) { rememberFailure(model.profileScope, 'sms', error); setNote('验证码发送失败，可打开故障诊断检查账号服务连接。'); }
     finally { setBusy(null); }
   }
   async function signIn() {
@@ -61,7 +62,7 @@ export function Login() {
     try {
       model.chooseMode('cloud', await authorizeCloud(form.phone, form.code, device.current ?? randomDeviceId()));
       navigate('/vehicles', { replace: true });
-    } catch (error) { setNote(error instanceof LocalSessionStorageError ? error.message : '登录失败，请检查验证码或网络。'); }
+    } catch (error) { rememberFailure(model.profileScope, 'login', error); setNote(error instanceof LocalSessionStorageError ? error.message : '登录失败，请检查验证码或网络。'); }
     finally { setBusy(null); }
   }
   async function resumeCloud() {
@@ -90,6 +91,7 @@ export function Login() {
       <div className="why"><Link to="/subaccount">为什么要用<b>子账号</b>？</Link></div>
     </form>
     <div className="login-alternatives">
+      <Link className="link" to="/states">故障诊断与导出</Link>
       <button className="link" disabled={busy === 'login'} onClick={() => { model.chooseMode('demo'); navigate('/vehicles', { replace: true }); }}>使用演示账号</button>
       <button className="link" disabled={busy === 'login'} onClick={() => { model.chooseMode('ha'); navigate('/ha'); }}>连接 Home Assistant</button>
       {canResume && !(model.mode === 'cloud' && model.expired) && <button className="link" disabled={busy === 'login'} onClick={() => void resumeCloud()}>继续使用已登录账号</button>}
@@ -135,13 +137,13 @@ export function VehicleList({ manage = false }: { manage?: boolean }) {
   if (capacitySetup && !model.shouldGuideBatterySetup(capacitySetup)) return <Navigate to="/home" replace />;
   return <><AppBar title={manage ? '车辆管理' : '选择车辆'} back={manage ? '/mine' : model.vehicle ? '/home' : '/login'} sub={manage ? '车辆与安全' : '已授权车辆'} />
     <div className="page no-nav">
-      {model.expired || !menu.length || model.scenario === 'offline' ?
+      {model.expired || !menu.length || (model.simulated && model.scenario === 'offline') ?
         <Section className="vehicle-empty"><div className="confirm-ic"><Icon name={model.expired ? 'key' : 'car'} size={24} /></div>
-          <h2>{model.expired ? '会话已失效' : model.scenario === 'offline' ? '无法加载车辆' : '未找到已授权车辆'}</h2>
-          <p>{model.expired ? '重新登录后可继续查看车况。' : '请让主账号分享车辆，再重新检查。'}</p>
+          <h2>{model.expired ? '会话已失效' : model.vehiclesError || model.scenario === 'offline' ? '无法加载车辆' : '未找到已授权车辆'}</h2>
+          <p>{model.expired ? '重新登录后可继续查看车况。' : model.vehiclesError ? '车辆列表读取失败，可重新检查或导出诊断。' : '请让主账号分享车辆，再重新检查。'}</p>
           {model.expired ? <Link className="btn accent" to="/login">重新登录</Link> :
             <><Link className="btn accent" to="/vehicle-access">查看车辆授权</Link><button className="btn ghost" onClick={() => void recheck()}>重新检查车辆</button></>}
-          <p role="status">{note}</p></Section> :
+          <Link className="link" to="/states">故障诊断与导出</Link><p role="status">{note}</p></Section> :
         <>
           {menu.map((car, i) => <button key={car.id} className={'vcard' + (selected === car.id ? ' selected' : '')} aria-pressed={selected === car.id}
             onClick={() => { setSelected(car.id); if (manage) model.setVehicleId(car.id); }}>
@@ -156,6 +158,11 @@ export function VehicleList({ manage = false }: { manage?: boolean }) {
         </>}
       {capacitySetup && <VehicleEnergySheet key={capacitySetup.id} setup onSave={enterHome}
         close={() => { model.skipBatterySetup(); enterHome(); }} />}
+      {manage && model.mode === 'cloud' && model.operationScope && !model.expired && <Section title="动力类型">
+        <Seg label="动力类型" options={[[ 'auto', '自动识别' ], [ 'bev', '纯电' ], [ 'reev', '增程' ]] as const}
+          current={model.powertrainInfo.preference} choose={model.powertrainInfo.choose} />
+        <p className="small muted">当前按{model.current.powertrain === 'reev' ? '增程' : '纯电'}显示。设置仅对本机当前账号的这辆车生效。</p>
+      </Section>}
       {canEditEnergy && <Section title="电池与充电"><Row icon="battery" title="电池容量与充电效率"
         sub={model.energySettings.capacityKwh === null ? '选择车型配置或填写容量' :
           formatBatteryCapacity(model.energySettings.capacityKwh) + (model.energySettings.capacityBasis === 'published' ? ' kWh · 公开容量暂估' : ' kWh 可用容量')}

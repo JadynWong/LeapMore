@@ -69,24 +69,33 @@ function Trend({ active, days, setDays, rows, loading }: { active: boolean; days
   </div>;
 }
 
-const labels = { stats: '本周统计', rank: '近 6 周能耗排名', trend: '里程与能耗', breakdown: '上周能耗构成' };
+const labels = { stats: '本周统计', rank: '近 6 周能耗排名', trend: '里程与能耗', breakdown: '上周能耗构成', cost: '充电费用估算' };
 type Card = keyof typeof labels;
-const initialCards: Card[] = ['stats', 'rank', 'trend', 'breakdown'];
+const initialCards = Object.keys(labels) as Card[];
 export function EnergyPage({ active }: { active: boolean }) {
   const m = useModelContext();
-  const [search] = useSearchParams();
+  const [search, setSearch] = useSearchParams();
   const jumpToExpense = search.get('section') === 'cost';
   const [days, setDays] = useState(7);
-  const [byVehicle, updateCards] = useSetting<Record<string, (Card | 'cost')[]>>('energyCards', {});
-  const cards = (byVehicle[m.vehicleId] ?? initialCards).filter((key): key is Card => Object.hasOwn(labels, key));
-  const setCards = (next: Card[]) => updateCards(current => ({ ...current, [m.vehicleId]: next }));
+  const [byVehicle, updateCards] = useSetting<Record<string, Card[] | { cards: Card[] }>>('energyCards', {});
+  const saved = byVehicle[m.vehicleId];
+  // The old array omitted cost even when it was displayed at the bottom.
+  const layout = Array.isArray(saved) ? [...saved, 'cost' as const] : saved?.cards ?? initialCards;
+  const cards = [...new Set(layout.filter(key => Object.hasOwn(labels, key)))];
+  const hasCost = cards.includes('cost');
+  const setCards = (next: Card[]) => updateCards(current => ({ ...current, [m.vehicleId]: { cards: next } }));
+  function closeCostLink() {
+    const next = new URLSearchParams(search);
+    next.delete('section');
+    setSearch(next, { replace: true });
+  }
   const [editing, setEditing] = useState(false);
   const [adding, setAdding] = useState(false);
   const mileage = m.canSee('mileage');
   useEffect(() => {
     if (!active) { setAdding(false); return; }
-    if (jumpToExpense && mileage) document.getElementById('expense-statistics')?.scrollIntoView({ block: 'start' });
-  }, [active, jumpToExpense, mileage]);
+    if (jumpToExpense && mileage && hasCost) document.getElementById('expense-statistics')?.scrollIntoView({ block: 'start' });
+  }, [active, jumpToExpense, mileage, hasCost]);
   const useCloud = mileage && !!m.client;
   const cloud = useQuery({ queryKey: ['cloud', 'energy', m.cloudKey, days], queryFn: ({ signal }) => m.client!.getEnergy(m.vehicleId, days, signal),
     enabled: active && useCloud, retry: false, staleTime: 5 * 60_000 });
@@ -146,6 +155,7 @@ export function EnergyPage({ active }: { active: boolean }) {
   const total = parts.every(([, n]) => n !== null) ? parts.reduce((sum, [, n]) => sum + (n ?? 0), 0) : null;
   const revealBreakdown = useChartReveal(active && mileage && cards.includes('breakdown'), total !== null && total > 0);
   function content(key: Card) {
+    if (key === 'cost') return <ExpenseCard active={active} />;
     if (key === 'trend') return <Trend active={active} days={days} setDays={setDays} rows={rows} loading={cloud.isFetching || history.isFetching} />;
     if (key === 'stats') return <div className="statrow"><div className="card stat"><div className="k">本周行驶</div><div className="v num">{weeklyKm.length ? value(sumKm(weeklyKm), 1) : '—'} <span className="energy-unit">km</span></div></div>
       <div className="card stat"><div className="k">{m.current.powertrain === 'reev' ? '平均油耗' : '平均能耗'}</div><div className="v num">
@@ -158,7 +168,7 @@ export function EnergyPage({ active }: { active: boolean }) {
         <div className="energy-readings">{parts.map(([name, n, color]) => <div key={name}><span className="energy-reading-label"><i style={{ background: color }} />{name}</span><b className="energy-reading-value">{value(n, 1)} kWh</b></div>)}</div></div>;
   }
   return <div className="energy-screen" hidden={!active}><AppBar title="统计" back="/home" action={mileage ? <button className="appbar-action icon-action" aria-label={editing ? '完成' : '编辑'}
-    title={editing ? '完成' : '编辑'} onClick={() => setEditing(!editing)}><Icon name={editing ? 'check' : 'edit'} size={18} /></button> : undefined} />
+    title={editing ? '完成' : '编辑'} onClick={() => { if (jumpToExpense) closeCostLink(); setEditing(!editing); }}><Icon name={editing ? 'check' : 'edit'} size={18} /></button> : undefined} />
     <div className="page energy-page" ref={page}>{!mileage ? <MileageNotice /> : <>
       {editing && <p className="tiny muted">长按卡片后拖动排序，点右上角移除。</p>}
       {cards.map((key, i) => <article key={key} data-energy-card={key} className={'energy-card' + (editing ? ' editing' : '')}>
@@ -168,7 +178,7 @@ export function EnergyPage({ active }: { active: boolean }) {
         {content(key)}
       </article>)}
       {editing && <button className="btn ghost" onClick={() => setAdding(true)}>+ 添加卡片</button>}
-      <ExpenseCard active={active} />
+      {active && jumpToExpense && !hasCost && <Sheet title="充电费用明细" close={closeCostLink} showClose><ExpenseCard active /></Sheet>}
     </>}
     {active && adding && <Sheet title="添加统计卡片" close={() => setAdding(false)}>
       {(Object.keys(labels) as Card[]).map(key => <button key={key} className="btn ghost" disabled={cards.includes(key)} onClick={() => { setCards([...cards, key]); setAdding(false); }}>{labels[key]}</button>)}

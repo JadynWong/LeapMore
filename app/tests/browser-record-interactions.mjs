@@ -17,7 +17,8 @@ async function swipe(from, to, beforeEnd) {
 
 try {
   await b.run(`localStorage.setItem('leapmore.mode', '"demo"'); localStorage.setItem('leapmore.activeVehicle', '"demo-c10"');
-    localStorage.removeItem('leapmore.source'); localStorage.removeItem('leapmore.energyCards');`);
+    localStorage.removeItem('leapmore.source');
+    localStorage.setItem('leapmore.energyCards', JSON.stringify({'demo-c10':['stats','rank','trend','breakdown']}));`);
   await b.reload();
   await route('/energy');
   assert.equal(await b.run("JSON.parse(localStorage.getItem('leapmore.theme'))"), 'system');
@@ -29,6 +30,7 @@ try {
   await b.click('[aria-label="编辑"]');
   const order = () => b.run('[...document.querySelectorAll(".energy-card")].map(card => card.dataset.energyCard)');
   const beforeOrder = await order();
+  assert.deepEqual(beforeOrder, ['stats', 'rank', 'trend', 'breakdown', 'cost']);
   const cardPoint = key => b.run(`(() => {
     const rect = document.querySelector('[data-energy-card="${key}"]').getBoundingClientRect();
     return { x: rect.left + 36, y: rect.top + 46 };
@@ -46,6 +48,38 @@ try {
   await touch('touchMove', toCard);
   await touch('touchEnd');
   assert.deepEqual((await order()).slice(0, 2), ['rank', 'stats']);
+  await b.run(`document.querySelector('[data-energy-card=cost] h3').scrollIntoView({block:'center'})`);
+  const costPoint = await b.run(`(() => {
+    const r = document.querySelector('[data-energy-card=cost] h3').getBoundingClientRect();
+    return {x:r.left + 12, y:r.top + r.height / 2};
+  })()`);
+  await touch('touchStart', costPoint);
+  await wait(280);
+  assert.ok(await b.run('!!document.querySelector("[data-energy-card=cost][data-dragging]")'));
+  const aboveCost = await b.run(`(() => {
+    const r = document.querySelector('[data-energy-card=breakdown]').getBoundingClientRect();
+    return {x:r.left + 25, y:r.bottom - 10};
+  })()`);
+  await touch('touchMove', aboveCost);
+  await touch('touchEnd');
+  assert.equal((await order()).at(-2), 'cost');
+  await b.click('[aria-label="完成"]');
+  await b.reload();
+  await wait(250);
+  assert.equal((await order()).at(-2), 'cost');
+  await b.click('[aria-label="编辑"]');
+  await b.click('[aria-label="删除充电费用估算"]');
+  await b.reload();
+  await wait(250);
+  assert.ok(!(await order()).includes('cost'));
+  await route('/records?tab=cost');
+  assert.ok(await b.run('!!document.querySelector("dialog[open] #expense-statistics")'));
+  await b.click('dialog[open] [aria-label=关闭]');
+  assert.ok(!(await order()).includes('cost'));
+  await b.click('[aria-label="编辑"]');
+  await b.run(`[...document.querySelectorAll('.energy-page button')].find(b=>b.textContent==='+ 添加卡片').click()`);
+  await b.run(`[...document.querySelectorAll('dialog[open] button')].find(b=>b.textContent==='充电费用估算').click()`);
+  assert.equal((await order()).at(-1), 'cost');
   await b.click('[aria-label="完成"]');
   await b.click('[aria-label="时间范围"] button:nth-child(2)');
   await b.click('[aria-label="图表类型"] button:nth-child(2)');

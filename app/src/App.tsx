@@ -96,9 +96,10 @@ function Screen() {
   const tab = tabs.findIndex(t => t[0] === path);
   const preview = import.meta.env.DEV && new URLSearchParams(location.search).has('preview') && path === '/widgets';
   const authRoutes = ['/welcome', '/login', '/subaccount', '/ha'];
-  const publicRoutes = [...authRoutes, '/vehicle-access'];
+  const publicRoutes = [...authRoutes, '/vehicle-access', '/states'];
   const main = m.booted && !m.expired && m.vehicle && tab >= 0;
   const atAppearance = path === '/appearance';
+  const diagnosticViewer = path === '/states' && new URLSearchParams(location.search).get('check') === '3d';
   const homeKey = m.booted && !m.expired && m.mode && m.vehicle ? JSON.stringify([m.mode, m.cloudKey, m.vehicle.id]) : '';
   const energyKey = homeKey && (m.mode === 'ha' ? JSON.stringify([homeKey, m.ha.config?.url, m.ha.vin]) : homeKey);
   const [openedEnergy, setOpenedEnergy] = useState('');
@@ -114,15 +115,16 @@ function Screen() {
   const [openedVehicle, setOpenedVehicle] = useState('');
   const vehicleView = atHome ? 'home' : atAppearance ? 'appearance' : null;
   useEffect(() => {
-    if (vehicleView || !homeKey) setOpenedVehicle(homeKey);
-  }, [vehicleView, homeKey]);
+    if (diagnosticViewer) setOpenedVehicle('');
+    else if (vehicleView || !homeKey) setOpenedVehicle(homeKey);
+  }, [vehicleView, homeKey, diagnosticViewer]);
 
   return <div className={'screen app-screen' + (compact ? ' compact' : '') + (path === '/home' ? ' home-screen bg-sky' : '') + (main ? ' with-nav' : '')}>
     <div className="view app-view" ref={body} tabIndex={-1} onScroll={atEnergy ? event => {
       energyScroll.current = { key: energyKey, top: event.currentTarget.scrollTop };
     } : undefined}>
       <div className={'app-scroll-content' + (atAppearance ? ' appearance-scroll-content' : '')}>
-      {homeKey && (vehicleView || openedVehicle === homeKey) && <VehicleSurfaces key={homeKey} view={vehicleView} />}
+      {homeKey && !diagnosticViewer && (vehicleView || openedVehicle === homeKey) && <VehicleSurfaces key={homeKey} view={vehicleView} />}
       {!m.booted && !authRoutes.includes(path) ? <p className="loading">正在读取会话…</p> :
       !m.mode && !publicRoutes.includes(path) && !preview ? <Navigate to="/welcome" replace /> :
       m.expired && !['/login', '/vehicle-access', '/vehicles', '/states', ...mineRoutes].includes(path) ? <Navigate to="/login" replace /> :

@@ -5,12 +5,13 @@ import react from '@vitejs/plugin-react';
 
 export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '');
-  const version = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8')).version;
+  const { version, buildNumber } = JSON.parse(readFileSync(new URL('./package.json', import.meta.url), 'utf8'));
   const target = env.VITE_HA_DEV_PROXY_ORIGIN?.replace(/\/+$/, '');
   return {
     base: './',
     define: {
       __LEAPMORE_VERSION__: JSON.stringify(version),
+      __LEAPMORE_BUILD__: JSON.stringify(String(buildNumber)),
       __LEAPMORE_LOCAL_ASSETS__: JSON.stringify(env.LEAPMORE_LOCAL_CAR_ASSETS === '1'),
       __LEAPMORE_LOCAL_3D__: JSON.stringify(env.LEAPMORE_LOCAL_3D_DEMO === '1'),
     },

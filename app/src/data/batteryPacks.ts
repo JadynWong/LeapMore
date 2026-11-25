@@ -1,4 +1,5 @@
 import type { Powertrain, Vehicle } from './types.ts';
+import { namedPowertrain } from './powertrain.ts';
 
 export interface BatteryPack {
   label: string;
@@ -109,7 +110,7 @@ export function vehicleBatteryPacks(vehicle: BatteryVehicle | undefined, reporte
   if (!family) return { choices: [], preset: undefined };
   const key = family.replace(/\s/g, '');
   const model = packs[key === 'B05' ? 'LAFA5' : key];
-  const powertrain = /增程|REEV|EREV|HYBRID/.test(name) ? 'reev' : /纯电|\bBEV\b/.test(name) ? 'bev' : reportedPowertrain;
+  const powertrain = reportedPowertrain ?? namedPowertrain(name);
   const choices = (['bev', 'reev'] as const).flatMap(type => !powertrain || type === powertrain ?
     (model[type] ?? []).map(pack => ({
       ...pack,

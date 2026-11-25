@@ -4,6 +4,7 @@ interface DesktopState {
   vehicle: string;
   soc: string;
   range: string;
+  rangeLabel: string;
   fuel: string;
   state: string;
   charging: string;

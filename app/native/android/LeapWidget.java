@@ -115,7 +115,7 @@ public abstract class LeapWidget extends AppWidgetProvider {
             visible(view, R.id.widget_status, !small || stale);
             text(view, R.id.widget_range, withSmallUnit(snapshot.optString("range", "— km"), " km"), ink);
             view.setTextViewTextSize(R.id.widget_range, TypedValue.COMPLEX_UNIT_SP, rangeSize);
-            text(view, R.id.widget_range_label, fuel.isEmpty() ? "续航" : "综合续航", muted);
+            text(view, R.id.widget_range_label, snapshot.optString("rangeLabel", fuel.isEmpty() ? "续航" : "综合续航"), muted);
             text(view, R.id.widget_soc, withSmallUnit(soc, "%"), ink);
             view.setTextViewTextSize(R.id.widget_soc, TypedValue.COMPLEX_UNIT_SP, rangeSize);
             text(view, R.id.widget_soc_label, "电量", muted);

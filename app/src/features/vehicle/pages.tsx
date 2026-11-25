@@ -75,7 +75,7 @@ export function ClimatePage() {
           {c.climateOn === null ? '状态未知' : c.climateOn ? '已开启' : '已关闭'}</button></div>
       <div className="climate-stepper">
         <button className="round-btn" aria-label="降低目标温度" disabled={values.temp <= 16 || blocked} onClick={() => edit('temp', values.temp - 1)}><Icon name="minus" size={21} /></button>
-        <div><div className="climate-target num">{values.temp.toFixed(1)}<span>℃</span></div><div className="muted">{model.simulated || model.current.climateTemp !== null ? '目标温度' : '设定温度'} {dirty && <span className="pill pending">待发送</span>}</div></div>
+        <div><div className="climate-target num">{value(dirty ? values.temp : c.targetTemp, 1)}<span>℃</span></div><div className="muted">{dirty || c.targetTemp !== null ? '目标温度' : '目标温度未上报'} {dirty && <span className="pill pending">待发送</span>}</div></div>
         <button className="round-btn" aria-label="提高目标温度" disabled={values.temp >= 30 || blocked} onClick={() => edit('temp', values.temp + 1)}><Icon name="plus" size={21} /></button>
       </div>
       <div className="climate-row"><span>模式</span><Seg label="模式" current={values.mode} options={modes} choose={v => edit('mode', v)} disabled={blocked} /></div>
@@ -129,7 +129,7 @@ export function ChargingPage() {
         <circle cx="71" cy="71" r={radius} fill="none" stroke="var(--accent)" strokeWidth="9" strokeLinecap="round"
           strokeDasharray={circumference} strokeDashoffset={circumference * (1 - Math.min(100, Math.max(0, current.soc ?? 0)) / 100)} /></svg>
         <div className="center"><b className="num">{value(current.soc)}{current.soc !== null && '%'}</b><span>当前电量</span></div></div>
-      <div className="tiny muted">CLTC 续航 {value(current.range)} km</div></div>
+      <div className="tiny muted">纯电续航 {value(current.electricRange)} km</div></div>
     <Section title="充电上限">
       <div className="charge-limit"><input className="slide" type="range" min="50" max="100" step="5" value={shownLimit ?? 50}
         aria-label="充电上限" aria-valuetext={shownLimit === null ? '未知' : shownLimit + '%'} disabled={blocked || storedLimit === null} onChange={e => setLimit(e.target.valueAsNumber)}

@@ -29,6 +29,7 @@ function parseBody(data: unknown, status: number): Record<string, unknown> {
 export async function requestJson(method: string, url: string, init: {
   headers?: Record<string, string>;
   body?: string;
+  probe?: boolean;
   timeoutMs?: number;
 } = {}): Promise<Record<string, unknown>> {
   if (Capacitor.getPlatform() === 'openharmony') {
@@ -40,18 +41,19 @@ export async function requestJson(method: string, url: string, init: {
       url, method, headers: init.headers, data: init.body,
       connectTimeout: init.timeoutMs ?? 20000,
       readTimeout: init.timeoutMs ?? 20000,
-      responseType: 'json', disableRedirects: true,
+      responseType: init.probe ? 'text' : 'json', disableRedirects: true,
     });
     return parseBody(res.data, res.status);
   }
-  const res = await fetch(url, { method, headers: init.headers, body: init.body, redirect: 'error', cache: 'no-store',
+  const res = await fetch(url, { method, headers: init.headers, body: init.body, credentials: init.probe ? 'omit' : 'same-origin', redirect: 'error', cache: 'no-store',
     referrerPolicy: 'no-referrer', signal: AbortSignal.timeout(init.timeoutMs ?? 20_000) });
   return parseBody(await res.text(), res.status);
 }
 
-export async function requestBinary(url: string, init: { headers?: Record<string, string>; timeoutMs?: number } = {}): Promise<ArrayBuffer> {
+export async function requestBinary(url: string, init: { headers?: Record<string, string>; timeoutMs?: number; onStatus?: (status: number) => void } = {}): Promise<ArrayBuffer> {
   if (Capacitor.getPlatform() === 'openharmony') {
     const reply = await harmonyRequest({ url, method: 'GET', headers: init.headers ?? {}, binary: true });
+    init.onStatus?.(reply.status);
     if (reply.status !== 200 || !reply.data) throw new Error('无法下载车模资源');
     return decodeBase64(reply.data);
   }
@@ -61,6 +63,7 @@ export async function requestBinary(url: string, init: { headers?: Record<string
       connectTimeout: init.timeoutMs ?? 30000, readTimeout: init.timeoutMs ?? 120000,
       responseType: 'arraybuffer',
     });
+    init.onStatus?.(res.status);
     if (res.status !== 200) throw new Error('无法下载车模资源');
     const data = res.data as unknown;
     if (data instanceof ArrayBuffer) return data;
@@ -70,6 +73,7 @@ export async function requestBinary(url: string, init: { headers?: Record<string
     throw new Error('二进制响应类型不支持');
   }
   const res = await fetch(url, { headers: init.headers });
+  init.onStatus?.(res.status);
   if (!res.ok) throw new Error('HTTP ' + res.status);
   return res.arrayBuffer();
 }

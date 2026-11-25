@@ -3,10 +3,10 @@ import type { Charge, Point, Trip } from './ha/measurements';
 import type { EnergyDay, Vehicle } from './types';
 
 export const demoVehicles: Vehicle[] = [
-  { id: 'demo-c10', vin: 'DEMO••8821', nickname: '我的 C10', model: 'C10', year: 2026, powertrain: 'bev', source: 'fixture' },
-  { id: 'demo-b10', vin: 'DEMO••3106', nickname: '家里的 B10', model: 'B10', year: 2025, powertrain: 'bev', source: 'fixture' },
+  { id: 'demo-c10', vin: 'DEMO••8821', nickname: '我的 C10', model: 'C10', year: 2026, declaredPowertrain: 'bev', source: 'fixture' },
+  { id: 'demo-b10', vin: 'DEMO••3106', nickname: '家里的 B10', model: 'B10', year: 2025, declaredPowertrain: 'bev', source: 'fixture' },
 ];
-export const haVehicle: Vehicle = { id: 'ha-local', vin: '', model: 'C10', nickname: '我的车辆', year: 0, powertrain: 'bev', source: 'ha' };
+export const haVehicle: Vehicle = { id: 'ha-local', vin: '', model: 'C10', nickname: '我的车辆', year: 0, declaredPowertrain: 'bev', source: 'ha' };
 export const demoLocation: Point = { at: Date.now() - 120_000, lat: 31.2218, lon: 121.5443, coordinate: 'gcj02' };
 export const demoTires = [240, 240, 230, 230];
 

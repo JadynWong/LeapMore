@@ -1,6 +1,10 @@
+import { ServiceFailure } from '../serviceFailure';
 import md5 from 'blueimp-md5';
+import { diagnosticFamily, diagnosticYear } from '../modelDiagnostics';
+import type { ModelTrace } from '../modelDiagnostics';
 import type { Capability, CarState, EnergyDay, Vehicle, VehicleClient } from '../types';
 import { numberOf } from '../ha/measurements';
+import { displayedRange, namedPowertrain, powertrainRanges } from '../powertrain';
 import { energyRankOf } from '../energyRank';
 import { maskPhone } from '../phoneMask';
 import { socPercent } from '../vehicleEnergy';
@@ -35,15 +39,22 @@ export interface CarLogin {
 }
 
 const cloudAuthErrors = new Set([401, 302002004, 302010202, 302010219]);
-export class CloudSessionExpired extends Error {
-  constructor() { super('零跑会话已失效，请重新登录。'); }
+export class CloudSessionExpired extends ServiceFailure {
+  constructor(status?: number, code?: number) { super('auth', status, code); }
 }
 export class RemoteDeliveryUnknown extends Error {}
 const remoteTimeout = 6_000;
 function requireCloudResponse(response: Record<string, unknown>) {
   const code = Number(response.code ?? response.result ?? response._status);
-  if (cloudAuthErrors.has(code)) throw new CloudSessionExpired();
-  if ((Number.isFinite(code) && code !== 0 && code !== 200) || response._raw) throw new Error('零跑服务暂不可用。');
+  const status = Number(response._status) || undefined;
+  const business = Number(response.code ?? response.result);
+  const safeCode = Number.isSafeInteger(business) && Math.abs(business) <= 999999999 ? business : undefined;
+  if (status === 401 || cloudAuthErrors.has(code)) throw new CloudSessionExpired(status, safeCode);
+  if (vehicleRateLimited(response)) throw new CloudRateLimited(status, safeCode);
+  if (status === 403 || code === 403) throw new ServiceFailure('forbidden', status, safeCode);
+  if (status && (status < 200 || status >= 300)) throw new ServiceFailure('service', status, safeCode);
+  if (response._raw) throw new ServiceFailure('response', status);
+  if (Number.isFinite(code) && code !== 0 && code !== 200) throw new ServiceFailure('service', status, safeCode);
 }
 function permissionCodes(value: unknown): string[] {
   const codes = Array.isArray(value) ? value : typeof value === 'string' ? value.split(',') : [];
@@ -86,6 +97,7 @@ export async function sendSmsCode(phone: string, deviceId = randomDeviceId()): P
   phone = phone.replace(/\D/g, '');
   const url = ACCOUNT_BASE + '/applogin/compliance/sendmessagecode?phoneNo=' + encodeURIComponent(rsaEncryptPhone(phone));
   const res = await requestJson('GET', url, { headers: accountHeaders(deviceId), timeoutMs: 20000 });
+  requireCloudResponse(res);
   const code = Number(res.code);
   if (!Number.isFinite(code) || (code !== 0 && code !== 200)) throw new Error('验证码发送失败。');
 }
@@ -240,6 +252,14 @@ function heatingSwitch(raw: Record<string, unknown>, id: string): boolean | null
   return value === 0 ? false : value === 1 || value === 2 ? true : null;
 }
 
+function climateSetpoint(raw: Record<string, unknown>) {
+  for (const id of ['2183', '2184']) {
+    const degrees = rawNum(raw, id);
+    if (degrees !== null && degrees >= 16 && degrees <= 32) return degrees;
+  }
+  return null;
+}
+
 function mapVehicle(raw: Record<string, unknown>): Vehicle {
   const type = String(raw.carType || raw.carTypeCode || raw.series || '');
   const abilities = raw.abilities ?? raw.ability;
@@ -252,7 +272,7 @@ function mapVehicle(raw: Record<string, unknown>): Vehicle {
     abilities: Array.isArray(abilities) ? abilities.map(String) : undefined,
     commandRights: permissionCodes(raw.rightList),
     year: Number(raw.year || 0),
-    powertrain: /REEV|增程/i.test(type + ' ' + String(raw.seriesName ?? '')) ? 'reev' : 'bev',
+    declaredPowertrain: namedPowertrain(type + ' ' + String(raw.seriesName ?? '')),
     source: 'live',
   };
 }
@@ -263,18 +283,19 @@ function mapState(vehicleId: string, vin: string, payload: Record<string, unknow
   const signal = record(data.signal);
   const source = Object.keys(signalMap).length ? signalMap : t03 ? (Object.keys(signal).length ? signal : data) : signalMap;
   if ([data.vin, source.vin].some(value => value && String(value).trim().toUpperCase() !== vin.toUpperCase())) {
-    throw new Error('零跑云返回的车况与当前车辆不一致。');
+    throw new ServiceFailure('mismatch');
   }
   const raw = t03 ? normalizeT03(source) : source;
   const mirrorLeft = heatingSwitch(raw, '49'), mirrorRight = heatingSwitch(raw, '50');
   const soc = socPercent(rawNum(raw, '100003')) ?? socPercent(rawNum(raw, '1204'));
-  const range = rawNum(raw, '2188') ?? rawNum(raw, '3260');
+  const ranges = powertrainRanges(raw);
+  const range = displayedRange(ranges.evidence ? 'reev' : 'bev', ranges);
   const fuel = rawNum(raw, '3235');
   const speed = rawNum(raw, '1319');
   const gear = rawNum(raw, '1010');
   const windowPercent = ['644', '865', '645', '866'].map(id => rawNum(raw, id)).map(value => value !== null && value >= 0 && value <= 100 ? value : null);
   const windows = ['1693', '1694', '1695', '1696'].map((id, i) => rawNum(raw, id) ?? windowPercent[i] ?? null);
-  if (!(t03 ? hasT03Telemetry(raw) : Object.keys(raw).some(key => /^\d+$/.test(key)))) throw new Error('零跑云本次未返回车况。');
+  if (!(t03 ? hasT03Telemetry(raw) : Object.keys(raw).some(key => /^\d+$/.test(key)))) throw new ServiceFailure('empty');
   const tirePressureKpa = ['2646', '2653', '2660', '2667'].map(id => rawNum(raw, id));
   const plug = rawNum(raw, '47');
   const connection = rawNum(raw, '1149');
@@ -302,9 +323,9 @@ function mapState(vehicleId: string, vin: string, payload: Record<string, unknow
     vehicleId,
     updatedAt: updated, reportedAt,
     freshness: !updated ? 'unknown' : Date.now() - updated > 30 * 60_000 ? 'stale' : 'fresh',
-    soc, rangeKm: range,
+    soc, rangeKm: range.km, rangeReadings: ranges,
     fuelPercent: fuel,
-    fuelRangeKm: rawNum(raw, '3256') ?? rawNum(raw, '3259'),
+    fuelRangeKm: ranges.fuel,
     locked: lock == null ? null : lock === 1,
     trunkOpen: trunk == null ? null : trunk === 1,
     windowOpen: [...windows, ...windowPercent].some(x => x !== null && x > 0) ? true : windows.every(x => x === 0) ? false : null,
@@ -320,7 +341,7 @@ function mapState(vehicleId: string, vin: string, payload: Record<string, unknow
     remainingChargeMinutes: rawNum(raw, '1200'),
     healthCharging: rawNum(raw, '48') === null ? null : rawNum(raw, '48') === 1,
     climateOn: rawNum(raw, '1938') === null ? null : rawNum(raw, '1938') === 1,
-    climateTempC: rawNum(raw, '2183'), climateFan: rawNum(raw, '1941'),
+    climateTempC: climateSetpoint(raw), climateFan: rawNum(raw, '1941'),
     seatHeat: rawNum(raw, '2100'), seatVent: rawNum(raw, '2101'),
     steeringHeat: heatingSwitch(raw, '1816'),
     mirrorHeat: mirrorLeft === true || mirrorRight === true ? true : mirrorLeft === false && mirrorRight === false ? false : null,
@@ -399,7 +420,6 @@ export class LiveVehicleClient implements VehicleClient {
       });
     };
     const parse = (response: Record<string, unknown>) => {
-      if (vehicleRateLimited(response)) throw new CloudRateLimited();
       requireCloudResponse(response);
       return mapState(vehicleId, vin, response, t03);
     };
@@ -505,23 +525,53 @@ export class LiveVehicleClient implements VehicleClient {
     return { modelType: Number(data.modelType || 0), previewUrl: url };
   }
 
-  async get3DPackages(vehicleId: string): Promise<{ h5: ArrayBuffer; src: ArrayBuffer; modelParam: Record<string, unknown> }> {
+  async get3DManifest(vehicleId: string, trace?: ModelTrace) {
+    trace?.('key');
     const vin = await this.resolveVin(vehicleId);
     const endpoint = 'v3/api/carpicture/3d/key';
-    let data = record((await this.carGet(endpoint, { vin, deviceID: this.deviceId, osVersion: '120.0.6099.230' }, vin, true)).data);
-    if (![data.h5Key, data.srcKey, data.modelParam, data.modelType, data.modelVersion].some(Boolean)) {
-      data = record((await this.carGet(endpoint, { vin }, vin, true)).data);
+    const manifest = async (params: Record<string, string>) => {
+      const response = await this.carGet(endpoint, params, vin, true);
+      const data = record(response.data), model = record(data.modelParam);
+      const modelType = Number(data.modelType), version = String(data.modelVersion ?? '');
+      trace?.('manifest', { httpStatus: num(response._status) ?? undefined, modelType: [1, 2, 3].includes(modelType) ? modelType : undefined,
+        modelVersion: /^\d{1,4}(?:\.\d{1,4}){0,3}$/.test(version) ? version : undefined,
+        hasH5Key: !!data.h5Key, hasSrcKey: !!data.srcKey, hasCarType: !!model.carType, hasYear: !!model.year,
+        family: diagnosticFamily(model.carType), year: diagnosticYear(model.year) });
+      return data;
+    };
+    let data = await manifest({ vin, deviceID: this.deviceId, osVersion: '120.0.6099.230' });
+    if (![data.h5Key, data.srcKey, Object.keys(record(data.modelParam)).length, data.modelType, data.modelVersion].some(Boolean)) {
+      trace?.('fallback');
+      data = await manifest({ vin });
     }
+    return { data, vin };
+  }
+
+  async get3DPackages(vehicleId: string, trace?: ModelTrace): Promise<{ h5: ArrayBuffer; src: ArrayBuffer; modelParam: Record<string, unknown> }> {
+    const { data, vin } = await this.get3DManifest(vehicleId, trace);
     const h5Key = String(data.h5Key || '');
     const srcKey = String(data.srcKey || '');
     const modelParam = record(data.modelParam);
-    if (!h5Key || !srcKey || !modelParam.carType || !modelParam.year) throw new Error('零跑云未提供本车的 3D 素材。');
-    const getZip = async (key: string): Promise<ArrayBuffer> => {
+    if (!h5Key || !srcKey || !modelParam.carType || !modelParam.year) {
+      trace?.('unavailable');
+      throw new Error('零跑云未提供本车的 3D 素材。');
+    }
+    const getZip = async (key: string, kind: 'h5' | 'src'): Promise<ArrayBuffer> => {
+      trace?.(kind);
       const params = { vin, key };
       const headers = await signedHeaders(this.car, this.account, this.deviceId, params, vin);
-      return requestBinary(CAR_BASE + '/carownerservice/v3/api/carpicture/key/package?' + new URLSearchParams(params).toString(), { headers, timeoutMs: 180000 });
+      let httpStatus: number | undefined;
+      const bytes = await requestBinary(CAR_BASE + '/carownerservice/v3/api/carpicture/key/package?' + new URLSearchParams(params).toString(),
+        { headers, timeoutMs: 180000, onStatus: status => { httpStatus = status; } }).catch(error => {
+          if (httpStatus) trace?.('received', { httpStatus });
+          throw error;
+        });
+      const head = new Uint8Array(bytes, 0, Math.min(2, bytes.byteLength));
+      trace?.('received', { httpStatus, bytes: bytes.byteLength,
+        format: head[0] === 80 && head[1] === 75 ? 'zip' : head[0] === 31 && head[1] === 139 ? 'gzip' : 'other' });
+      return bytes;
     };
-    return { h5: await getZip(h5Key), src: await getZip(srcKey), modelParam };
+    return { h5: await getZip(h5Key, 'h5'), src: await getZip(srcKey, 'src'), modelParam };
   }
 
   async getParkingPhoto(vehicleId: string): Promise<{ url: string | null; uploadTime: number | null }> {

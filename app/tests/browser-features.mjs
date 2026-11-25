@@ -234,7 +234,7 @@ try {
   await match(/退出登录？/);
   await click('取消');
   await click('关于 LeapMore');
-  await match(/0\.1\.0 · 预发布/);
+  await match(/LeapMore 0\.1\.1/);
   await b.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true });
   const repositoryLinks = await b.run(`[...document.querySelectorAll('dialog[open] a')].map(link => [link.href, link.querySelector('small')?.innerText])`);
   const repositoryUrls = ['https://github.com/MiRaToo/LeapMore', 'https://gitcode.com/MiraRato/LeapMore'];
@@ -244,10 +244,15 @@ try {
   await b.click('dialog[open] [aria-label=关闭]');
   await click('关于 LeapMore');
   assert.equal(await b.run(`document.querySelector('[aria-label="首选更新源"] button[aria-pressed="true"]').textContent`), 'GitCode');
+  await b.run(`const originalFetch = window.fetch;
+    window.fetch = (url, options) => String(url).startsWith('https://api.gitcode.com/') ? Promise.resolve(Response.json([])) :
+      String(url).startsWith('https://api.github.com/') ? Promise.resolve(Response.json([{
+        tag_name:'v0.2.0', html_url:'https://github.com/MiRaToo/LeapMore/releases/tag/v0.2.0',
+        assets:[{name:'test.apk',browser_download_url:'https://github.com/MiRaToo/LeapMore/releases/download/v0.2.0/test.apk'}]
+      }])) : originalFetch(url, options);`);
   await click('检查更新');
-  await match(/模拟检查完成 · 0\.1\.0/);
-  await click('忽略此版本');
-  await match(/恢复版本提醒/);
+  await match(/下载 v0\.2\.0 · APK/);
+  assert.equal(await b.run("document.querySelector('dialog a.btn.accent').href"), 'https://github.com/MiRaToo/LeapMore/releases/download/v0.2.0/test.apk');
   await b.click('dialog[open] .about-license summary');
   assert.match(await b.run("document.querySelector('dialog[open] details[open] .about-license-text').innerText"), /GNU GENERAL PUBLIC LICENSE/);
   assert.equal(b.errors.length, 0, JSON.stringify(b.errors));

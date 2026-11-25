@@ -1,3 +1,4 @@
+import { failureFacts, failureLabels, type FailureKind } from '../data/serviceFailure.ts';
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 
 const arkNet = registerPlugin<{ request(options: {
@@ -8,8 +9,8 @@ export const harmonyRequest = arkNet.request;
 
 export class NetworkError extends Error {
   readonly status: number;
-  constructor(status: number) {
-    super(status === 0 ? '网络不可用，请检查地址、网络及浏览器跨域设置。'
+  constructor(status: number, kind?: FailureKind) {
+    super(kind ? failureLabels[kind] + '。' : status === 0 ? '服务连接中断，请检查网络或服务地址。'
       : status === 401 || status === 403 ? '授权失效或无权读取。请重新连接。'
       : '服务暂不可用，请稍后重试。');
     this.status = status;
@@ -48,6 +49,8 @@ export async function request<T>(url: string, options: {
     return await response.json() as T;
   } catch (error) {
     if (error instanceof NetworkError) throw error;
-    throw new NetworkError(0);
+    if (options.signal?.aborted) throw error;
+    const kind = error instanceof SyntaxError ? 'response' : failureFacts(error).kind;
+    throw new NetworkError(0, kind === 'unknown' || kind === 'transport' ? undefined : kind);
   }
 }

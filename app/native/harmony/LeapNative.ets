@@ -14,6 +14,7 @@ function reject(call: PluginCall, message: string): void { call.rejectMessage('L
 const utf8 = new util.TextEncoder();
 const decoder = util.TextDecoder.create('utf-8');
 interface SaveResult { saved: boolean }
+interface DiagnosticEnvironment { os: string; sdk: number }
 interface AppIconStatus { icon: string; canChange: boolean; }
 
 export class LeapSettings extends CapacitorPlugin {
@@ -21,8 +22,18 @@ export class LeapSettings extends CapacitorPlugin {
   constructor(context: common.UIAbilityContext) {
     super();
     this.context = context;
+    this.registerMethod('diagnosticEnvironment', call => {
+      const facts: DiagnosticEnvironment = { os: deviceInfo.osFullName, sdk: deviceInfo.sdkApiVersion };
+      call.resolve(facts);
+    });
     this.registerMethod('saveCsv', call => { this.saveCsv(call); });
     this.registerMethod('openAmap', call => { this.openAmap(call); });
+    this.registerMethod('openRelease', call => {
+      const address = call.getString('url');
+      if (!/^https:\/\/(github\.com|gitcode\.com)\//.test(address)) { reject(call, '无效发布地址'); return; }
+      this.context.startAbility({ action: 'ohos.want.action.viewData', uri: address, entities: ['entity.system.browsable'] })
+        .then(() => call.resolve()).catch(() => reject(call, '无法打开系统浏览器'));
+    });
     this.registerMethod('getAppIcon', call => { this.getAppIcon(call); });
     this.registerMethod('setAppIcon', call => { this.setAppIcon(call); });
   }

@@ -15,10 +15,11 @@ import type { AndroidBackgroundCheck, AppIcon } from '../../platform/settings';
 import type { OperationMode } from '../../platform/operationAuth';
 import { themeAccents, themeModes, useSetting } from '../../data/preferences';
 import type { ThemeAccent, ThemeMode } from '../../data/preferences';
-import { checkAndroidUpdates, compareVersions, gitcodeRepository, githubRepository, releaseRepositoryUrl, validReleaseRepository } from '../../data/releases';
+import { checkUpdates, compareVersions, gitcodeRepository, githubRepository, packageFormats, releasePlatform, releaseRepositoryUrl, validReleaseRepository } from '../../data/releases';
 import type { PublishedRelease, ReleaseSource } from '../../data/releases';
 import { AppBar, Hint, Row, Section, Seg, Sheet, SheetButtons, asset, stamp } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
+import { Diagnostics } from './Diagnostics';
 import { AccountProfile } from './AccountProfile';
 
 function configuredRepository(value: string | undefined, fallback: string) {
@@ -79,21 +80,24 @@ export function AppAppearance() {
 
 type ReleaseCheck = { status: 'idle' | 'checking' | 'unavailable' } | { status: 'ready'; release: PublishedRelease | null };
 
-function AboutSheet({ simulated, ignored, setIgnored, close }: {
-  simulated: boolean; ignored: boolean; setIgnored: (value: boolean) => void; close: () => void;
-}) {
+function AboutSheet({ close }: { close: () => void }) {
   const [preferred, setPreferred] = useSetting<ReleaseSource>('updateSource', 'github');
   const [result, setResult] = useState<ReleaseCheck>({ status: 'idle' });
   const source = preferred === 'gitcode' ? 'gitcode' : 'github';
   const checking = result.status === 'checking';
+  const platform = releasePlatform(Capacitor.getPlatform());
+  const [linkError, setLinkError] = useState('');
+  function openLink(event: React.MouseEvent<HTMLAnchorElement>) {
+    if (platform !== 'openharmony') return;
+    event.preventDefault();
+    setLinkError('');
+    void nativeSettings.openRelease({ url: event.currentTarget.href }).catch(() => setLinkError('无法打开系统浏览器。'));
+  }
   async function check() {
+    setLinkError('');
     setResult({ status: 'checking' });
-    if (simulated) {
-      setTimeout(() => setResult({ status: 'ready', release: null }), 650);
-      return;
-    }
     try {
-      const release = await checkAndroidUpdates(source, releaseRepositories);
+      const release = await checkUpdates(source, releaseRepositories, platform);
       setResult({ status: 'ready', release });
     } catch {
       setResult({ status: 'unavailable' });
@@ -101,16 +105,16 @@ function AboutSheet({ simulated, ignored, setIgnored, close }: {
   }
   const latest = result.status === 'ready' ? result.release : null;
   const status = result.status === 'unavailable' ? '暂时无法查询发布版本。' : result.status !== 'ready' ? '' :
-    simulated ? '模拟检查完成 · ' + __LEAPMORE_VERSION__ : !latest ? '发布源暂无安卓安装包。' :
+    !latest ? '发布源暂无 ' + packageFormats[platform] + ' 安装包。' :
     compareVersions(latest.tag, __LEAPMORE_VERSION__) > 0 ? '有新版本可用。' : '当前已是最新版本。';
-  return <Sheet title="关于 LeapMore" sub={'LeapMore ' + __LEAPMORE_VERSION__ + ' · 预发布'} close={close} showClose>
+  return <Sheet title="关于 LeapMore" sub={'LeapMore ' + __LEAPMORE_VERSION__} close={close} showClose>
     <p className="confirm-desc">{disclaimer}</p>
     <Section title="首选更新源">
       <Seg current={source} options={releaseSources} disabled={checking}
         choose={next => { setPreferred(next); setResult({ status: 'idle' }); }} label="首选更新源" />
       {releaseSources.map(([key, label]) => {
         const url = releaseRepositoryUrl(key, releaseRepositories[key]);
-        return <a key={key} className="row tap" href={url} target="_blank" rel="noreferrer">
+        return <a key={key} className="row tap" href={url} onClick={openLink} target="_blank" rel="noreferrer">
           <span className="t">{label}<small>{url}</small></span>
           <span className="v"><Icon name="external" size={16} /></span>
         </a>;
@@ -118,15 +122,19 @@ function AboutSheet({ simulated, ignored, setIgnored, close }: {
     </Section>
     <button className="btn accent" onClick={() => void check()} disabled={checking}>{checking ? '正在检查…' : '检查更新'}</button>
     {status && <p role="status">{status}</p>}
-    {latest && <a className="btn secondary" href={latest.url} target="_blank" rel="noreferrer">
+    {latest?.downloadUrl && compareVersions(latest.tag, __LEAPMORE_VERSION__) > 0 &&
+      <a className="btn accent" href={latest.downloadUrl} onClick={openLink} target="_blank" rel="noreferrer">下载 {latest.tag} · {packageFormats[platform]}</a>}
+    {latest && <a className="btn secondary" href={latest.url} onClick={openLink} target="_blank" rel="noreferrer">
       {releaseLabels[latest.source]} · 查看 {latest.tag}{latest.prerelease ? ' · 预发布' : ''}
     </a>}
+    {latest && platform !== 'android' && <p className="tiny muted">{platform === 'ios' ?
+      '未签名 IPA 需为主应用和小组件签名，再用原安装方式更新。' : '未签名 HAP 需使用匹配的证书及 Profile 签名后安装。'}</p>}
+    {linkError && <p role="status">{linkError}</p>}
     <details className="about-license">
       <summary>开源许可 · GNU GPL v3.0</summary>
       <p>版权所有 © 2026 MiRaToo。本软件按 GNU GPL v3.0 授权并无担保提供，可按许可条款再分发。</p>
       <pre className="about-license-text" tabIndex={0}>{licenseText}</pre>
     </details>
-    {simulated && <button className="btn ghost" onClick={() => setIgnored(!ignored)}>{ignored ? '恢复版本提醒' : '忽略此版本'}</button>}
   </Sheet>;
 }
 
@@ -136,7 +144,6 @@ export function Mine() {
   const { key } = useAmapKey();
   const [sheet, setSheet] = useState<'logout' | 'about' | 'privacy' | 'cache' | 'amap' | null>(null);
   const [note, setNote] = useState('');
-  const [ignored, setIgnored] = useSetting('demoIgnoreUpdate', false);
   const qc = useQueryClient();
   const close = () => { setSheet(null); setNote(''); };
   async function clearCache() {
@@ -158,8 +165,8 @@ export function Mine() {
       <Row list icon="map" title="高德地图 Key" right={key ? '已配置' : '未配置'} onClick={() => setSheet('amap')} />
       <Row list icon="file" title="缓存管理" onClick={() => setSheet('cache')} /></div>
     <div className="list-card"><Row list icon="shield" title="隐私与免责声明" onClick={() => setSheet('privacy')} />
-      <Row list icon="file" title="诊断日志（脱敏）" to="/states" />
-      <Row list icon="star" title="关于 LeapMore" right={m.simulated && !ignored ? <i className="dot-badge" /> : undefined} onClick={() => setSheet('about')} /></div>
+      <Row list icon="file" title="故障诊断与导出" to="/states" />
+      <Row list icon="star" title="关于 LeapMore" onClick={() => setSheet('about')} /></div>
     <button className="btn logout" onClick={() => setSheet('logout')}>退出登录</button>
     <p className="tiny muted settings-footer">LeapMore 是免费提供的非官方项目</p>
     {sheet === 'amap' && <AmapKeySheet close={close} />}
@@ -167,7 +174,7 @@ export function Mine() {
       <SheetButtons cancel={close} label="退出登录" danger action={() => { void m.logout().then(() => navigate('/login', { replace: true })).catch(() => setNote('退出失败，请重试。')); }} />{note && <p role="status">{note}</p>}</Sheet>}
     {sheet === 'privacy' && <Sheet title="隐私与免责声明" close={close}><p className="confirm-desc">{disclaimer}</p><p className="confirm-desc">系统版本将授权凭据保存在平台安全存储。脱敏 CSV 只包含日期与记录摘要。</p><button className="btn ghost" onClick={close}>关闭</button></Sheet>}
     {sheet === 'cache' && <Sheet title="缓存管理" close={close}><p className="confirm-desc">清理车模下载和地址查询缓存。</p><SheetButtons cancel={close} label="清理缓存" action={() => void clearCache()} />{note && <p role="status">{note}</p>}</Sheet>}
-    {sheet === 'about' && <AboutSheet simulated={m.simulated} ignored={ignored} setIgnored={setIgnored} close={close} />}
+    {sheet === 'about' && <AboutSheet close={close} />}
   </div></>;
 }
 
@@ -333,7 +340,8 @@ export function States() {
   const m = useModelContext();
   const [platform, setPlatform] = useState(Capacitor.getPlatform());
   useEffect(() => { if (Capacitor.isNativePlatform()) void App.getInfo().then(info => setPlatform(Capacitor.getPlatform() + ' · ' + info.version)).catch(() => {}); }, []);
-  return <><AppBar title="状态与异常" back="/mine" sub={platform} /><div className="page no-nav settings-page">
+  return <><AppBar title="故障诊断" back={!m.mode || m.expired ? "/login" : !m.vehicle ? "/vehicles" : "/mine"} sub={platform} /><div className="page no-nav settings-page">
+    <Diagnostics key={JSON.stringify([m.profileScope, m.cloudKey])} />
     <Section title="数据过期"><Hint kind="warn" icon="clock">超过更新周期时显示上次采集时间。</Hint></Section>
     <Section title="网络与同步"><Hint kind={m.ha.error ? 'err' : ''} icon="wifioff">{m.ha.error || '网络断开后保留已有缓存。恢复连接后可继续同步。'}</Hint>
       <button className="btn secondary sm" disabled={m.refreshing} onClick={() => void m.refresh(true)}>刷新车况</button></Section>

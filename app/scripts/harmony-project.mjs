@@ -1,7 +1,7 @@
 import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 
 const entry = 'openharmony/entry/src/main';
-const { version } = JSON.parse(readFileSync('package.json', 'utf8'));
+const { version, buildNumber } = JSON.parse(readFileSync('package.json', 'utf8'));
 const overlay = 'native/harmony';
 const ets = entry + '/ets';
 for (const [file, folder] of [['LeapNative.ets', 'plugins'], ['WidgetCard.ets', 'widget'], ['WidgetAbility.ets', 'widget']]) {
@@ -123,6 +123,7 @@ for (const folder of ['openharmony/AppScope/resources/base/media', entry + '/res
 }
 copyFileSync('public/assets/leaplink-icon.png', 'openharmony/AppScope/resources/base/media/leapmore_original.png');
 edit('openharmony/AppScope/app.json5', source => source.replace(/"versionName"\s*:\s*"[^"]+"/, `"versionName": "${version}"`)
+  .replace(/"versionCode"\s*:\s*\d+/, `"versionCode": ${1000000 + buildNumber}`)
   .replace('"vendor": "example"', '"vendor": "LeapMore"')
   .replace('"$media:layered_image"', '"$media:leapmore"'));
 edit('openharmony/AppScope/app.json5', source => source.includes('"alternateIcons"') ? source :

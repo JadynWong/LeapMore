@@ -25,6 +25,32 @@ import org.json.JSONObject;
 
 @CapacitorPlugin(name = "LeapSettings")
 public class LeapSettingsPlugin extends Plugin {
+    @PluginMethod
+    public void diagnosticEnvironment(PluginCall call) {
+        JSObject facts = new JSObject().put("os", "Android " + Build.VERSION.RELEASE)
+            .put("sdk", Build.VERSION.SDK_INT)
+            .put("internetPermission", getContext().checkSelfPermission(android.Manifest.permission.INTERNET) == PackageManager.PERMISSION_GRANTED);
+        if (Build.VERSION.SDK_INT >= 26) {
+            android.content.pm.PackageInfo webView = android.webkit.WebView.getCurrentWebViewPackage();
+            if (webView != null) facts.put("webViewVersion", webView.versionName);
+        }
+        try {
+            android.net.ConnectivityManager network = getContext().getSystemService(android.net.ConnectivityManager.class);
+            android.net.Network active = network.getActiveNetwork();
+            android.net.NetworkCapabilities caps = network.getNetworkCapabilities(active);
+            facts.put("activeNetwork", active != null);
+            if (caps != null) {
+                facts.put("wifi", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_WIFI))
+                    .put("cellular", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_CELLULAR))
+                    .put("ethernet", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_ETHERNET))
+                    .put("vpn", caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN))
+                    .put("validated", caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_VALIDATED))
+                    .put("captivePortal", caps.hasCapability(android.net.NetworkCapabilities.NET_CAPABILITY_CAPTIVE_PORTAL));
+            }
+        } catch (SecurityException unavailable) { /* OS version remains available independently. */ }
+        call.resolve(facts);
+    }
+
     private ComponentName launcher(String name) {
         return new ComponentName(getContext(), MainActivity.class.getPackage().getName() + ".Launcher" + name);
     }

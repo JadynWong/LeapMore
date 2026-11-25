@@ -37,6 +37,6 @@ cd android
 
 ## 构建选项
 
-- 应用版本来自 `app/package.json`。应用检查 GitHub 的 `MiRaToo/LeapMore` 和 GitCode 的 `MiraRato/LeapMore`，查找最新的带 APK 发布版本。自建版本可分别用 `VITE_RELEASE_REPOSITORY` 和 `VITE_GITCODE_RELEASE_REPOSITORY` 指定两个仓库。仓库值格式为 `所有者/仓库名`。
+- 应用版本来自 `app/package.json`。应用检查 GitHub 的 `MiRaToo/LeapMore` 和 GitCode 的 `MiraRato/LeapMore`，按当前系统查找带 APK、IPA 或 HAP 的最新版本。自建版本可分别用 `VITE_RELEASE_REPOSITORY` 和 `VITE_GITCODE_RELEASE_REPOSITORY` 指定两个仓库。仓库值格式为 `所有者/仓库名`。
 - 用户在 App 中填写自己的零跑、HA 和高德授权。Android 支持用户填写局域网 HTTP HA 地址。自定义构建可用 `LEAPMORE_ANDROID_HA_HTTP_HOST` 将明文连接白名单限定在一个指定的局域网 IPv4 或 `.local` 主机。iOS 可用 `LEAPMORE_IOS_HA_HTTP_HOST` 配置一个明确的 `.local` 主机。
 - 发布构建使用默认的关闭 WebView 调试设置。车模由已授权车况接口按需获取，源码仓库只提供查看器代码、通用图标和演示数据。

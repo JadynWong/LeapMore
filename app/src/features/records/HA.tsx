@@ -7,6 +7,7 @@ import { beginAuth, consumeAuth, observeNativeCallback } from '../../data/ha/aut
 import { normalizeAddress } from '../../data/ha/client';
 import { fields } from '../../data/ha/schema';
 import { AppBar, Hint, Section, Seg, stamp, Switch } from '../../ui/components';
+import { NetworkError } from '../../platform/network';
 import { usesLocalSessionVault } from '../../platform/secure';
 import { Icon } from '../../ui/Icon';
 
@@ -69,7 +70,7 @@ export function HAConnect() {
       if (model.source !== 'hybrid') model.setSource('ha');
       navigate('/ha', { replace: true });
     } catch (error) {
-      setNote(error instanceof Error && /网络不可用|授权失效/.test(error.message) ? error.message : '无法连接 HA，请检查地址与认证信息。');
+      setNote(error instanceof NetworkError ? error.message : '无法连接 HA，请检查地址与认证信息。');
     } finally { if (manual) setBusy(false); else if (Capacitor.isNativePlatform()) setBusy(false); else window.setTimeout(() => setBusy(false), 1000); }
   }
   const { ha } = model;

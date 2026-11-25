@@ -3,7 +3,8 @@ require 'json'
 require 'xcodeproj'
 
 root = File.expand_path('..', __dir__)
-version = JSON.parse(File.read(File.join(root, 'package.json'))).fetch('version')
+package = JSON.parse(File.read(File.join(root, 'package.json')))
+version = package.fetch('version')
 project_root = File.join(root, 'ios', 'App')
 project = Xcodeproj::Project.open(File.join(project_root, 'App.xcodeproj'))
 native = File.join(root, 'native', 'ios')
@@ -50,6 +51,7 @@ FileUtils.mkdir_p(widget_folder)
 Xcodeproj::Plist.write_to_path(groups, File.join(widget_folder, 'LeapWidget.entitlements'))
 Xcodeproj::Plist.write_to_path({
   'CFBundleDisplayName' => 'LeapMore 车辆',
+  'CFBundleName' => '$(PRODUCT_NAME)',
   'CFBundleIdentifier' => '$(PRODUCT_BUNDLE_IDENTIFIER)',
   'CFBundleExecutable' => '$(EXECUTABLE_NAME)',
   'CFBundlePackageType' => 'XPC!',
@@ -72,7 +74,7 @@ end
   target.build_configurations.each do |config|
     settings = config.build_settings
     settings['DEVELOPMENT_TEAM'] = ENV['LEAPMORE_IOS_TEAM'] if ENV['LEAPMORE_IOS_TEAM']
-    settings['CURRENT_PROJECT_VERSION'] = '1'
+    settings['CURRENT_PROJECT_VERSION'] = package.fetch('buildNumber').to_s
     settings['MARKETING_VERSION'] = version
     if target == main
       settings['CODE_SIGN_ENTITLEMENTS'] = 'App/LeapMore.entitlements'
@@ -82,6 +84,7 @@ end
       settings['CODE_SIGN_ENTITLEMENTS'] = 'LeapWidget/LeapWidget.entitlements'
       settings['INFOPLIST_FILE'] = 'LeapWidget/Info.plist'
       settings['PRODUCT_BUNDLE_IDENTIFIER'] = 'com.leapmore.app.widget'
+      settings['PRODUCT_NAME'] = '$(TARGET_NAME)'
       settings['APPLICATION_EXTENSION_API_ONLY'] = 'YES'
       settings['SKIP_INSTALL'] = 'YES'
       settings['SWIFT_VERSION'] = '5.0'

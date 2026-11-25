@@ -1,5 +1,5 @@
 // 包装页只调用查看器能力，模型与查看器文件保持原样。版本与 car3d.py 同步。
-const WRAPPER_VERSION = 27;
+const WRAPPER_VERSION = 29;
 const q = new URLSearchParams(window.viewerParams||location.search);
 let homeView = q.has('home');
 let appearanceView = q.has('appearance');
@@ -15,6 +15,7 @@ const cfg = {
   sdkVersion:q.get("sdk")||"3.15.1", licenseNumber:"", theme:q.get("theme")||"default",
 };
 if(q.has("alias")) cfg.alias=q.get("alias");
+const c01Compat = cfg.carType === 'C01' && q.get('c01Compat') === '1';
 let quality = 'high', hostVisible=true, moving=false, testedRenderer=null, softwareRenderer=false;
 let ratioViewer=null, desiredRatio=1;
 function canDraw(){return hostVisible&&!document.hidden&&innerWidth>0&&innerHeight>0}
@@ -57,6 +58,15 @@ let viewApplied=false, skyCache=null, poseCar=null, appliedPose={}, revealing=fa
 const started=performance.now();
 const parentOrigin=window.viewerParentOrigin||location.origin;
 const post=m=>{if(parent!==window)parent.postMessage(m,parentOrigin)};
+post({t:'viewer-boot'});
+window.addEventListener('webglcontextcreationerror', () => post({t:'runtime-error', kind:'webgl-create'}), true);
+window.addEventListener('webglcontextlost', () => post({t:'runtime-error', kind:'webgl-lost'}), true);
+function reportRuntimeError(error) {
+  const message = typeof error === 'string' ? error : error?.message;
+  post({t:'runtime-error', kind: /CarModelModules is not defined|Can't find variable: CarModelModules/i.test(message || '') ? 'missing-modules' : 'script'});
+}
+window.addEventListener('error', event => reportRuntimeError(event.error || event.message));
+window.addEventListener('unhandledrejection', event => reportRuntimeError(event.reason));
 const nextFrame=()=>new Promise(resolve=>requestAnimationFrame(resolve));
 function sceneOf(){
   let s=window.viewer?.scene||window.viewer?.viewer?.scene;
@@ -548,10 +558,15 @@ async function reveal(){
   document.documentElement.classList.remove("pending");released=true;syncMotion();scheduleSurface();
   post({t:"ready",full,ms:performance.now()-started});
 }
-window.onFirstFrame=()=>{first=true;guardRenderer();applyQuality();post({t:"first",ms:performance.now()-started})};
+window.onFirstFrame=()=>{
+  first=true;guardRenderer();applyQuality();post({t:"first",ms:performance.now()-started});
+  if(c01Compat&&full&&!released)void reveal();
+};
 window.onFullCarLoaded=()=>{
   full=true;guardRenderer();clearTimeout(timeout);
   post({t:"full",ms:performance.now()-started});
+  // C01 loads its trim table after starting the full-model worker.
+  if(c01Compat&&!first)return;
   if(released)void applyAppearance(appearance,true).then(async()=>{
     await nextFrame();redraw();post({t:"ready",full:true,ms:performance.now()-started});
   });else void reveal();
@@ -607,9 +622,10 @@ window.__api={setBackground,setPaint,setWrap,applyView,applyPose,redraw,sceneOf,
 const timeout=setTimeout(()=>{if(!full){if(first)void reveal();post({t:"err",msg:first?"完整模型未就绪，当前显示简化车模":"车模加载超时，请导出诊断检查素材完整性"})}},25000);
 try{
   window.web3dPerformanceOptions={metricsEnabled:false,dynamicDprEnabled:true,transitionPixelRatioCap:1.25};
-  await import(window.viewerAsset ? window.viewerAsset('./index.js') : `./index.js?v=${WRAPPER_VERSION}`);
+  const entry = c01Compat ? './index.c01-v1.js' : './index.js';
+  await import(window.viewerAsset ? window.viewerAsset(entry) : entry + '?v=' + WRAPPER_VERSION);
   await window.newInit(JSON.stringify(cfg),JSON.stringify({width:innerWidth,height:innerHeight,energy:0,inland:0}));
-}catch(e){clearTimeout(timeout);post({t:"err",msg:String(e)})}
+}catch(e){clearTimeout(timeout);reportRuntimeError(e);post({t:"err",msg:"查看器初始化失败"})}
 document.addEventListener("visibilitychange",()=>{
   if(appViewer)updateVisibility();
   else{syncMotion();if(document.hidden)window.onBackend?.();else window.onFrontend?.()}

@@ -46,6 +46,7 @@ function useControlsModel() {
   const settings = settingsByVehicle[model.vehicleId] ?? initial;
   const [sheet, setSheet] = useState<'seat' | 'windows' | 'presets' | null>(null);
   const current = model.current;
+  const targetTemp = model.simulated ? settings.climate.temp : current.climateTemp;
   const climate = model.simulated ? settings.climate : {
     ...initial.climate, temp: current.climateTemp ?? 24, fan: current.climateFan && current.climateFan <= 7 ? current.climateFan : 3,
     seat: current.seatHeat ?? -1, vent: current.seatVent ?? -1,
@@ -133,7 +134,7 @@ function useControlsModel() {
     cmd.ask({ kind: 'charge', title, icon: 'plug', description, remote, onComplete, apply: () => patch(update) });
   }
   function find() { cmd.ask({ kind: 'find', title: '鸣笛寻车', icon: 'carHorn', description: '车辆将闪灯并鸣笛。', remote: { kind: 'find' } }); }
-  return { ...cmd, settings, climate, heating, hasCabinHeating, hasComfort, toggleHeater, sheet, setSheet, locked, lockTitle, climateOn, climateTitle, trunk, trunkTitle,
+  return { ...cmd, settings, climate, targetTemp, heating, hasCabinHeating, hasComfort, toggleHeater, sheet, setSheet, locked, lockTitle, climateOn, climateTitle, trunk, trunkTitle,
     window, windowPosition, windowOpen, shadeOpen, lock, toggleTrunk, setWindow, shade, toggleClimate, sendClimate, preset, seat, charging, find };
 }
 const Controls = createContext<ReturnType<typeof useControlsModel> | null>(null);

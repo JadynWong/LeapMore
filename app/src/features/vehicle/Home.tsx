@@ -86,7 +86,6 @@ export function Home({ active, modelSlot }: { active: boolean; modelSlot: RefObj
   const locationAddress = useAmapAddress(point, active && model.canSee('location') && !model.simulated).data;
   const mapTitle = locationAddress ? locationAddress.length > 8 ? '…' + locationAddress.slice(-8) : locationAddress : '车辆位置';
   const reev = v.powertrain === 'reev';
-  const total = reev ? v.range === null || v.fuelRange === null ? null : v.range + v.fuelRange : v.range;
   return <div className="home">
     <div className="hero">
       <header className="hero-top"><div className="hero-title"><div className="name">
@@ -94,17 +93,17 @@ export function Home({ active, modelSlot }: { active: boolean; modelSlot: RefObj
           onChange={e => setNickname(e.target.value)} onBlur={saveName} onKeyDown={e => { if (e.key === 'Enter') saveName(); if (e.key === 'Escape') setEdit(false); }} /> :
           <button className="name-btn" title="双击修改昵称" onDoubleClick={() => { setNickname(model.name); setEdit(true); }}>{model.name}</button>}
         <Link className="name-chev" to="/vehicles" aria-label="切换车辆"><Icon name="chevrond" size={17} /></Link></div>
-        <div className="sub">{!model.simulated && model.scenario === 'stale' ? '上次车况' : '状态更新'} · {model.scenario === 'offline' ? '缓存' : model.simulated ? '今天 20:35' : stamp(v.at)}</div></div>
+        <div className="sub">{!model.simulated && model.scenario === 'stale' ? '上次车况' : '状态更新'} · {model.scenario === 'offline' ? (v.at || model.simulated ? '缓存' : '暂无车况') : model.simulated ? '今天 20:35' : stamp(v.at)}</div></div>
         <div className="hero-tools"><button className="iconbtn" aria-label="刷新" aria-busy={model.refreshing} disabled={model.refreshing} onClick={() => void model.refresh(true)}><Icon name="refresh" size={18} /></button>
           <span className={'hero-pill ' + (v.driving ? 'green' : '')}>{v.driving == null ? '状态未知' : v.driving ? '行驶中' : '已驻车'}</span>
           <Link className={'hero-pill ' + (v.charging === 'charging' || v.charging === 'done' ? 'green' : '')} to="/charging">{chargeLabels[v.charging]}</Link>
         </div>
       </header>
       <div className="hero-metrics">
-        {reev ? <div className="dual-soc"><Meter percent={v.soc} range={v.range} icon="battery" /><Meter percent={v.fuel} range={v.fuelRange} icon="fuel" /></div> :
+        {reev ? <div className="dual-soc"><Meter percent={v.soc} range={v.electricRange} icon="battery" /><Meter percent={v.fuel} range={v.fuelRange} icon="fuel" /></div> :
           <div className="soc-line"><Icon name="battery" size={18} /><span className="soc-text num">{value(v.soc)}{v.soc !== null && '%'}</span>
             <div className="soc-bar"><b style={{ width: Math.min(100, Math.max(0, v.soc ?? 0)) + '%' }} /></div></div>}
-        <div className="energy-val num">{value(total)}<i>km</i></div>
+        <div className="energy-val num">{value(v.range)}<i>km</i></div>
         <div className="hero-lock"><button className="lock-state" disabled={!!c.reason('lock')} onClick={c.lock}>
           <Icon name={c.locked === false ? 'doorUnlock' : 'doorLock'} size={17} />
           <span className={c.locked === false ? 'lock-open-status' : undefined}>{c.locked === null ? '锁状态未知' : c.locked ? '车门已锁' : '车门未锁'}</span></button>
@@ -128,7 +127,7 @@ export function Home({ active, modelSlot }: { active: boolean; modelSlot: RefObj
       <div className="grid2">
         <section className="card climate"><div className="ch-top"><Link to="/climate"><div className="temp-main num">{value(v.inside, 1)}<i>℃</i></div><div className="temp-label">车内温度</div></Link>
           <button className={'fan-btn' + (c.climateOn ? ' on' : '')} aria-label="空调开关" disabled={controlBlocked} onClick={c.toggleClimate}><Icon name="climateFan" size={21} /></button></div>
-          <Link className="temp-target num" to="/climate">{model.simulated ? c.settings.climate.temp.toFixed(1) : '—'}<i>℃</i></Link>
+          <Link className="temp-target num" to="/climate" aria-label={'空调目标温度 ' + (c.targetTemp === null ? '未上报' : c.targetTemp + '℃')}>{value(c.targetTemp, 1)}<i>℃</i></Link>
           <div className="preset-actions"><button ref={presetTrigger} className={'round-btn' + (preset ? ' on' : '')} disabled={controlBlocked}
             onClick={() => showPreset(!preset)} aria-label="空调预设" aria-expanded={preset} aria-controls={preset ? presetId : undefined}><Icon name="climatePresets" size={19} /></button>
             {preset && <div className="preset-bubble" id={presetId} role="group" aria-label="空调预设选项">{presets.map(p =>

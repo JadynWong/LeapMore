@@ -14,8 +14,8 @@ function useWidgetData() {
   const commands = useVehicleControls();
   const current = model.current;
   const modelImage = hasLocalCarAssets && model.vehicle?.model === 'C10' ? 'c10' : hasLocalCarAssets && model.vehicle?.model === 'B10' ? 'b10' : '';
-  const range = current.powertrain === 'reev' && current.range !== null && current.fuelRange !== null ? current.range + current.fuelRange : current.range;
-  const state = model.expired ? '会话失效' : model.scenario === 'offline' ? '离线' : current.driving ? '行驶中' :
+  const range = current.range;
+  const state = model.expired ? '会话失效' : model.scenario === 'offline' ? (model.simulated ? '离线' : '车况读取失败') : current.driving ? '行驶中' :
     model.scenario === 'stale' ? '数据过期' : current.driving === false ? '已驻车' : '状态未知';
   const controls = [
     { id: 'lock', icon: commands.locked === false ? 'lock' : 'unlock', label: commands.locked === false ? '上锁' : '解锁', title: commands.lockTitle, invoke: commands.lock, enabled: !commands.reason('lock'), active: commands.locked === false },
@@ -32,7 +32,7 @@ export function PublishWidget() {
   const summary = model.vehicle && !model.expired ? {
     vehicle: widgetVehicle(model),
     soc: value(current.soc) + (current.soc !== null ? '%' : ''),
-    range: value(range) + ' km', fuel: current.powertrain === 'reev' ? value(current.fuel) + '%' : '',
+    range: value(range) + ' km', rangeLabel: current.rangeLabel, fuel: current.powertrain === 'reev' ? value(current.fuel) + '%' : '',
     state, charging: chargeLabels[current.charging], chargeStatus: current.charging, power: current.power === null ? '' : value(current.power, 1) + ' kW',
     inside: value(current.inside, 1) + '℃', locked: commands.locked === null ? '锁状态未知' : commands.locked ? '已锁' : '未锁',
     odometer: model.canSee('mileage') ? value(current.odometer) + ' km' : '',
@@ -101,7 +101,7 @@ export function WidgetPreview() {
     <Seg current={size} options={[[ 'small', '小 · 2×2'], ['medium', '中 · 4×2'], ['large', '大 · 4×4']]} choose={setSize} label="卡片尺寸" />
     <ControlNotice />
     <div className="widget-desktop"><section className={'widget widget-' + size} aria-label="桌面预览">
-      <div className="widget-range"><div>{stat(value(range), ' km', current.powertrain === 'reev' ? '综合续航' : '续航')}
+      <div className="widget-range"><div>{stat(value(range), ' km', current.rangeLabel)}
         {size !== 'small' && <span className="widget-state">{state}</span>}</div>{size !== 'large' && stat(value(current.soc), '%', '电量')}
         {size === 'medium' && <div className="widget-car-status">{image}<div className="widget-charging">{charge}{current.power !== null && <b>{value(current.power, 1)} kW</b>}</div></div>}
         {size === 'large' && image}</div>

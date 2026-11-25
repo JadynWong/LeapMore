@@ -18,6 +18,11 @@ export const nativeSettings = registerPlugin<{
   getAppIcon(): Promise<{ icon: AppIcon; canChange: boolean }>;
   setAppIcon(options: { icon: AppIcon }): Promise<void>;
   open(options: { target: string }): Promise<void>;
+  openRelease(options: { url: string }): Promise<void>;
+  diagnosticEnvironment(): Promise<{
+    os: string; sdk: number; webViewVersion?: string; internetPermission?: boolean; activeNetwork?: boolean;
+    wifi?: boolean; cellular?: boolean; ethernet?: boolean; vpn?: boolean; validated?: boolean; captivePortal?: boolean;
+  }>;
   checkBackground(): Promise<AndroidBackgroundCheck>;
   openAmap(options: { app: string; web: string }): Promise<void>;
   saveCsv(options: { name: string; text: string }): Promise<{ saved: boolean }>;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkAndroidUpdates, compareVersions, gitcodeRepository, githubRepository, latestAndroidRelease } from '../src/data/releases.ts';
+import { checkUpdates, compareVersions, gitcodeRepository, githubRepository, latestRelease } from '../src/data/releases.ts';
 
 const repositories = { github: githubRepository, gitcode: gitcodeRepository };
 const android = [{ name: 'LeapMore-android.apk' }];
@@ -9,17 +9,34 @@ const release = (tag: string, extra = {}) => ({
 });
 const mirrorRelease = (tag: string) => ({ tag_name: tag, release_status: 'pre', assets: android });
 
+test('each native platform selects its newest published package and validates the GitHub download link', async t => {
+  const asset = (tag: string, name: string) => ({ name, state: 'uploaded',
+    browser_download_url: 'https://github.com/' + githubRepository + '/releases/download/' + tag + '/' + name });
+  const apk = asset('v0.2.0', 'LeapMore-android.apk');
+  const ipa = asset('v0.1.1', 'LeapMore-ios-unsigned.ipa');
+  const hap = asset('v0.1.1', 'LeapMore-harmonyos-unsigned.hap');
+  const releases = [release('v0.2.0', { assets: [apk] }), release('v0.1.1', { assets: [
+    asset('v0.1.1', 'LeapMore-ios-build1-unsigned.ipa'), ipa, hap] })];
+  t.mock.method(globalThis, 'fetch', async (url: string) => Response.json(url.includes('api.github.com') ? releases : []));
+  for (const [platform, expected] of [['android', apk], ['ios', ipa], ['openharmony', hap]] as const) {
+    assert.equal((await checkUpdates('gitcode', repositories, platform))?.downloadUrl, expected.browser_download_url);
+  }
+  assert.equal(latestRelease(releases.slice(0, 1), 'github', githubRepository, 'ios'), null);
+  assert.equal(latestRelease([release('v0.2.0', { assets: [{...apk, browser_download_url: 'https://other.example/a.apk'}] })],
+    'github', githubRepository, 'android')?.downloadUrl, undefined);
+});
+
 test('the Android updater finds published prereleases and ignores drafts and releases without an APK', () => {
   const expected = release('v0.1.0', { prerelease: true });
   const results = [release('v0.2.0', { draft: true }), release('v0.3.0', { assets: [] }), expected,
     release('v0.0.9'), release('v0.1.1', { html_url: 'https://github.com/other/repo/releases/tag/v0.1.1' })];
-  assert.deepEqual(latestAndroidRelease(results, 'github', githubRepository), { tag: 'v0.1.0', url: expected.html_url, prerelease: true });
+  assert.deepEqual(latestRelease(results, 'github', githubRepository, 'android'), { tag: 'v0.1.0', url: expected.html_url, prerelease: true });
 });
 
 test('GitCode releases link to the repository release list when the API only provides an author URL', () => {
   const list = [{ ...mirrorRelease('v0.2.0'), author: { html_url: 'https://gitcode.com/MiraRato' } },
     { ...mirrorRelease('v0.3.0'), assets: [{ name: 'source.zip' }] }];
-  assert.deepEqual(latestAndroidRelease(list, 'gitcode', gitcodeRepository), {
+  assert.deepEqual(latestRelease(list, 'gitcode', gitcodeRepository, 'android'), {
     tag: 'v0.2.0', url: `https://gitcode.com/${gitcodeRepository}/releases`, prerelease: true,
   });
 });
@@ -31,10 +48,10 @@ test('updates use the newest APK and prefer the selected release source for equa
     assert.equal(url, `https://api.gitcode.com/api/v5/repos/${gitcodeRepository}/releases?direction=desc&per_page=30`);
     return Response.json([mirrorRelease(mirrorTag)]);
   });
-  assert.equal((await checkAndroidUpdates('gitcode', repositories))?.source, 'gitcode');
-  assert.equal((await checkAndroidUpdates('github', repositories))?.source, 'github');
+  assert.equal((await checkUpdates('gitcode', repositories, 'android'))?.source, 'gitcode');
+  assert.equal((await checkUpdates('github', repositories, 'android'))?.source, 'github');
   mirrorTag = 'v0.1.0';
-  assert.equal((await checkAndroidUpdates('gitcode', repositories))?.source, 'github');
+  assert.equal((await checkUpdates('gitcode', repositories, 'android'))?.source, 'github');
 });
 
 test('updates fall back to GitHub when GitCode is absent, has no APK, or cannot be reached', async t => {
@@ -46,7 +63,7 @@ test('updates fall back to GitHub when GitCode is absent, has no APK, or cannot 
   });
   for (const status of [404, 200, 503]) {
     mirrorStatus = status;
-    assert.equal((await checkAndroidUpdates('gitcode', repositories))?.source, 'github');
+    assert.equal((await checkUpdates('gitcode', repositories, 'android'))?.source, 'github');
   }
 });
 

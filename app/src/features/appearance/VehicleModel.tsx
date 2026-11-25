@@ -2,6 +2,8 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useRef, use
 import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSetting } from '../../data/preferences';
+import { failureFacts } from '../../data/serviceFailure';
+import { startModelTrace, viewerDiagnosticStep } from '../../data/modelDiagnostics';
 import { asset, hasLocalCarAssets } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
 import { useModelContext } from '../context';
@@ -54,15 +56,31 @@ export function VehicleVisualProvider({ children }: { children: ReactNode }) {
   return <Preferences.Provider value={useVisualPreferences()}>{children}</Preferences.Provider>;
 }
 
-export function useVehicleVisual(paused = false, visible = true) {
+export function useVehicleVisual(paused = false, visible = true, diagnostic = false) {
   const m = useModelContext();
-  const { mode, setMode, background, setBackground, quality, setQuality, wraps, setWraps, marketByVehicle, setMarketByVehicle } = useContext(Preferences)!;
+  const { mode: preferredMode, setMode, background, setBackground, quality, setQuality, wraps, setWraps, marketByVehicle, setMarketByVehicle } = useContext(Preferences)!;
+  const mode = diagnostic ? '3d' : preferredMode;
   const wrap = wraps[m.vehicleId] ?? emptyWrap;
   const market = marketByVehicle[m.vehicleId];
   const modelName = m.vehicle?.model ?? '零跑';
   const queryKey = ['cloud', '3d', m.cloudKey] as const;
   const cloud = useQuery({ queryKey, enabled: visible && mode === '3d' && !!m.client && !!m.vehicleId && !paused && !m.expired,
-    queryFn: async ({ signal }) => (await import('../../data/cloud/cloud3d')).prepareCloud3D(m.client!, m.vehicleId, undefined, signal), retry: false, staleTime: Infinity });
+    queryFn: async ({ signal }) => {
+      const trace = startModelTrace(m.cloudKey);
+      try {
+        const { prepareCloud3D } = await import('../../data/cloud/cloud3d');
+        const result = await prepareCloud3D(m.client!, m.vehicleId, undefined, signal, (step, facts) => {
+          if (!signal.aborted) trace(step, facts);
+        }, diagnostic);
+        signal.throwIfAborted();
+        trace('prepared');
+        return { ...result, trace };
+      } catch (error) {
+        if (signal.aborted) trace('cancelled');
+        else trace('failed', failureFacts(error));
+        throw error;
+      }
+    }, retry: false, staleTime: Infinity });
   const photo = useQuery({ queryKey: ['cloud', 'car-picture', m.cloudKey], enabled: visible && mode === '2d' && !!m.client && !!m.vehicleId && !m.expired,
     queryFn: () => m.client!.getCarPicture(m.vehicleId), retry: false, staleTime: 600_000 });
   const localViewer = __LEAPMORE_LOCAL_3D__ && m.simulated && modelName === 'C10'
@@ -193,6 +211,7 @@ export function VehicleModel({ visual, home = false, onStatus }: {
   const rememberBrokenImage = (url: string) => setBrokenImages(previous => [...previous, url]);
   const { viewer, scene: background, colorScheme, paintOverride, quality, wrap, cloud, visible } = visual;
   const cloudAsset = cloud.data;
+  const trace = cloudAsset?.trace;
   const isolated = !!cloudAsset?.webId;
   const status: ModelStatus = visual.mode === '2d' ? '2d' : viewer ? phase : cloud.isFetching ? 'loading' : 'unavailable';
   const wrapPayload = useMemo(() => {
@@ -225,20 +244,30 @@ export function VehicleModel({ visual, home = false, onStatus }: {
   useEffect(() => {
     if (!viewer) return;
     setPhase('loading');
+    trace?.('viewer');
+    const recorded = new Set<string>();
     function message(event: MessageEvent) {
       if (event.source !== frame.current?.contentWindow || event.origin !== (isolated ? 'null' : location.origin)) return;
+      const data = event.data;
+      if (trace && data && typeof data === 'object') {
+        const step = viewerDiagnosticStep(data);
+        if (step && !recorded.has(step)) {
+          recorded.add(step);
+          trace(step, typeof data.ms === 'number' && data.ms >= 0 && data.ms < 3_600_000 ? { elapsedMs: Math.round(data.ms) } : undefined);
+        }
+      }
       if (event.data?.t === 'appearance-request') sendPresentation();
       if (event.data?.t === 'ready' && event.data.full === true) setPhase('full');
       if (event.data?.t === 'err' && event.data?.msg !== '完整模型未就绪，当前显示简化车模') setPhase('unavailable');
     }
     window.addEventListener('message', message);
     return () => window.removeEventListener('message', message);
-  }, [viewer, isolated, sendPresentation]);
+  }, [viewer, isolated, sendPresentation, trace]);
   useEffect(() => {
     if (!viewer || !visible || phase !== 'loading') return;
-    const timeout = setTimeout(() => setPhase('unavailable'), 40_000);
+    const timeout = setTimeout(() => { trace?.('timeout'); setPhase('unavailable'); }, 40_000);
     return () => clearTimeout(timeout);
-  }, [viewer, visible, phase]);
+  }, [viewer, visible, phase, trace]);
   useEffect(() => {
     if (viewer) sendPresentation();
   }, [viewer, appearance, colorScheme, visible, home, sendPresentation]);
@@ -252,7 +281,7 @@ export function VehicleModel({ visual, home = false, onStatus }: {
   }
   return <div className={(home ? 'home-model' : 'c3d-stage') + ' bg-' + background} data-model-status={status}>
     {viewer && (status === 'loading' || status === 'full') &&
-      <iframe ref={frame} title={home ? '首页 3D 车模' : '3D 车模'} tabIndex={-1} src={isolated ? undefined : nativeUrl} srcDoc={cloudAsset?.document}
+      <iframe key={trace?.id ?? viewer} ref={frame} title={home ? '首页 3D 车模' : '3D 车模'} tabIndex={-1} src={isolated ? undefined : nativeUrl} srcDoc={cloudAsset?.document}
         data-revealed={status === 'full'}
         sandbox={isolated ? 'allow-scripts' : undefined} referrerPolicy="no-referrer" onLoad={event => {
           const target = event.currentTarget.contentWindow;
@@ -263,7 +292,7 @@ export function VehicleModel({ visual, home = false, onStatus }: {
           params.set('bg', background);
           const id = cloudAsset.webId;
           void import('../../data/cloud/cloud3d').then(({ sendViewerAssets }) => sendViewerAssets(target, id, params.toString())).catch(() => {
-            if (frame.current?.contentWindow === target) setPhase('unavailable');
+            if (frame.current?.contentWindow === target) { trace?.('transferError'); setPhase('unavailable'); }
           });
         }} />}
     {(status === 'loading' || status === 'unavailable') && <div className="c3d-loader" role="status"
