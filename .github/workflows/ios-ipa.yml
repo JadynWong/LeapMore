@@ -1,0 +1,58 @@
+name: iOS unsigned IPA
+
+on:
+  push:
+    branches: [ios-livecontainer]
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: macos-26
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: app
+
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 24
+      - name: Install build dependencies
+        run: |
+          npm install --global pnpm@11.29.0
+          pnpm install --frozen-lockfile
+          gem install --user-install xcodeproj --no-document
+      - name: Generate the Capacitor iOS project
+        run: pnpm native:ios
+      - name: Build for iPhone without signing
+        run: |
+          xcodebuild -project ios/App/App.xcodeproj -scheme App \
+            -configuration Release -sdk iphoneos -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/leapmore-ios" \
+            CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
+      - name: Package and verify the IPA
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP"
+          mkdir Payload
+          ditto leapmore-ios/Build/Products/Release-iphoneos/App.app Payload/App.app
+          app=Payload/App.app
+          executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")
+          lipo -verify_arch arm64 "$app/$executable"
+          xcrun vtool -arch arm64 -show-build "$app/$executable" | grep -Eq 'platform[[:space:]]+IOS$'
+          while IFS= read -r -d '' file; do
+            if codesign --display "$file" >/dev/null 2>&1; then
+              codesign --remove-signature "$file"
+            fi
+          done < <(find "$app" -type f -print0)
+          test ! -e "$app/embedded.mobileprovision"
+          ditto -c -k --keepParent Payload LeapMore-iOS-unsigned.ipa
+          unzip -tq LeapMore-iOS-unsigned.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LeapMore-iOS-unsigned
+          path: ${{ runner.temp }}/LeapMore-iOS-unsigned.ipa
+          if-no-files-found: error

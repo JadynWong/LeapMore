@@ -1,6 +1,6 @@
 # 从源码构建 LeapMore
 
-LeapMore 使用 React、TypeScript 和 Vite。Android 与 iOS 使用 Capacitor，鸿蒙使用 OpenHarmony Capacitor 适配器。构建会从 `native/` 生成平台工程。Android 以外的平台需要准备自己的签名。
+LeapMore 使用 React、TypeScript 和 Vite。Android 与 iOS 使用 Capacitor，鸿蒙使用 OpenHarmony Capacitor 适配器。构建会从 `native/` 生成平台工程。直接安装到 iOS 或鸿蒙设备需要配置签名。
 
 ## 安装依赖和本地预览
 
@@ -30,6 +30,12 @@ cd android
 ## iOS
 
 准备 Xcode 和 iOS SDK，并安装 Ruby 的 `xcodeproj` gem。执行 `pnpm native:ios` 后，用 Xcode 打开 `app/ios/App/App.xcodeproj`。为 App 和桌面卡片扩展选择同一签名团队及可用的 App Group，再编译安装。默认 App Group 为 `group.com.leapmore.app`。个人团队构建时可按自己的签名配置调整 Bundle ID 和 App Group。
+
+### LiveContainer（未签名 IPA）
+
+推送到 fork 的 `ios-livecontainer` 分支会触发 **iOS unsigned IPA** 工作流。构建成功后，在该次 Actions 运行的 **Artifacts** 下载 `LeapMore-iOS-unsigned`，解压后将 `LeapMore-iOS-unsigned.ipa` 导入 LiveContainer。该产物面向 ARM64 真机，而非模拟器，也不能直接安装到 iOS。桌面卡片等依赖系统签名权限的功能不在此安装方式的支持范围内。
+
+导入后可在首页选择连接 Home Assistant，填写具有受信任证书的 HTTPS 地址，并选择「手动输入长期访问令牌」。令牌仅在 App 内填写，不需要写入 GitHub Actions。
 
 ## 鸿蒙
 
