@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 import { test } from 'node:test';
-import { checkUpdates, compareVersions, gitcodeRepository, githubRepository, latestRelease } from '../src/data/releases.ts';
+import { checkUpdates, compareVersions, gitcodeRepository, githubRepository, installedPackageUrl, latestRelease } from '../src/data/releases.ts';
 
 const repositories = { github: githubRepository, gitcode: gitcodeRepository };
 const android = [{ name: 'LeapMore-android.apk' }];
@@ -50,8 +50,18 @@ test('updates use the newest APK and prefer the selected release source for equa
   });
   assert.equal((await checkUpdates('gitcode', repositories, 'android'))?.source, 'gitcode');
   assert.equal((await checkUpdates('github', repositories, 'android'))?.source, 'github');
+  const same = await checkUpdates('gitcode', repositories, 'android');
+  assert.equal(same?.pages.github, release('v0.2.0').html_url);
+  assert.equal(same?.pages.gitcode, 'https://gitcode.com/' + gitcodeRepository + '/releases');
   mirrorTag = 'v0.1.0';
-  assert.equal((await checkUpdates('gitcode', repositories, 'android'))?.source, 'github');
+  const behind = await checkUpdates('gitcode', repositories, 'android');
+  assert.equal(behind?.mirrorTag, mirrorTag);
+  assert.equal(behind?.source, 'github');
+  assert.equal(behind?.pages.gitcode, 'https://gitcode.com/' + gitcodeRepository + '/releases');
+  mirrorTag = 'v0.3.0';
+  const ahead = await checkUpdates('github', repositories, 'android');
+  assert.equal(ahead?.pages.github, 'https://github.com/' + githubRepository + '/releases');
+  assert.equal(ahead?.downloadUrl, undefined);
 });
 
 test('updates fall back to GitHub when GitCode is absent, has no APK, or cannot be reached', async t => {
@@ -72,4 +82,12 @@ test('release version ordering compares numbers and prerelease tags', () => {
   assert.ok(compareVersions('v0.1.0', '0.1.0-rc.2') > 0);
   assert.ok(compareVersions('0.1.0-rc.10', '0.1.0-rc.2') > 0);
   assert.equal(compareVersions('v0.1.0', '0.1.0'), 0);
+});
+
+test('current version downloads use the published filenames for all three platforms', () => {
+  for (const [platform, file] of [['android', 'android.apk'], ['ios', 'ios-unsigned.ipa'], ['openharmony', 'harmonyos-unsigned.hap']] as const) {
+    assert.equal(installedPackageUrl('0.1.1', platform, githubRepository),
+      'https://github.com/MiRaToo/LeapMore/releases/download/v0.1.1/LeapMore-v0.1.1-' + file);
+  }
+  assert.equal(installedPackageUrl('0.1.1', 'android', 'other/repository'), undefined);
 });

@@ -8,12 +8,21 @@ export const releasePlatform = (platform: string): ReleasePlatform =>
 export type Release = { tag: string; url: string; prerelease: boolean; downloadUrl?: string };
 export type PublishedRelease = Release & { source: ReleaseSource };
 
+export type ReleaseUpdate = PublishedRelease & { pages: Record<ReleaseSource, string>; mirrorTag?: string };
+export const officialWebsite = 'https://leapmore.mirato66.cloud/';
+export const backupDownloads = 'https://pan.quark.cn/s/9e6168a73f21';
 export const githubRepository = 'MiRaToo/LeapMore';
 export const gitcodeRepository = 'MiraRato/LeapMore';
 const repositoryHosts = { github: 'https://github.com', gitcode: 'https://gitcode.com' };
 const repositoryPath = /^[A-Za-z0-9][A-Za-z0-9_.-]*\/[A-Za-z0-9][A-Za-z0-9_.-]*$/;
 export const validReleaseRepository = (value: string) => repositoryPath.test(value);
 export const releaseRepositoryUrl = (source: ReleaseSource, repository: string) => repositoryHosts[source] + '/' + repository;
+
+export function installedPackageUrl(current: string, platform: ReleasePlatform, repository: string) {
+  if (repository !== githubRepository || !/^\d+\.\d+\.\d+$/.test(current)) return undefined;
+  const suffix = { android: 'android.apk', ios: 'ios-unsigned.ipa', openharmony: 'harmonyos-unsigned.hap' }[platform];
+  return releaseRepositoryUrl('github', repository) + '/releases/download/v' + current + '/LeapMore-v' + current + '-' + suffix;
+}
 
 function version(tag: string) {
   const match = /^v?(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+[0-9A-Za-z.-]+)?$/.exec(tag);
@@ -61,10 +70,10 @@ export function latestRelease(value: unknown, source: ReleaseSource, repository:
         !url.pathname.toLowerCase().startsWith('/' + repository.toLowerCase() + '/')) continue;
     if (!latest || compareVersions(item.tag_name, latest.tag) > 0) {
       const download = asset.browser_download_url;
-      const githubAsset = releaseRepositoryUrl(source, repository) + '/releases/download/' +
+      const packageUrl = releaseRepositoryUrl(source, repository) + '/releases/download/' +
         encodeURIComponent(item.tag_name) + '/' + encodeURIComponent(asset.name);
       latest = { tag: item.tag_name, url: url.href,
-        ...(source === 'github' && download === githubAsset ? { downloadUrl: download } : {}),
+        ...(download === packageUrl ? { downloadUrl: download } : {}),
         prerelease: item.prerelease === true || item.release_status === 'pre' || parsed.prerelease.length > 0 };
     }
   }
@@ -86,17 +95,28 @@ async function checkRelease(source: ReleaseSource, repository: string, platform:
 }
 
 export async function checkUpdates(preferred: ReleaseSource, repositories: Record<ReleaseSource, string>, platform: ReleasePlatform) {
-  const secondary = preferred === 'github' ? 'gitcode' : 'github';
-  const [first, second] = await Promise.allSettled([
-    checkRelease(preferred, repositories[preferred], platform),
-    checkRelease(secondary, repositories[secondary], platform),
+  const [githubResult, gitcodeResult] = await Promise.allSettled([
+    checkRelease('github', repositories.github, platform),
+    checkRelease('gitcode', repositories.gitcode, platform),
   ]);
-  const primaryRelease = first.status === 'fulfilled' ? first.value : null;
-  const secondaryRelease = second.status === 'fulfilled' ? second.value : null;
-  if (primaryRelease && secondaryRelease) {
-    return compareVersions(primaryRelease.tag, secondaryRelease.tag) >= 0 ? primaryRelease : secondaryRelease;
+  const github = githubResult.status === 'fulfilled' ? githubResult.value : null;
+  const gitcode = gitcodeResult.status === 'fulfilled' ? gitcodeResult.value : null;
+  let newest = github ?? gitcode;
+  if (github && gitcode) {
+    const difference = compareVersions(gitcode.tag, github.tag);
+    if (difference > 0 || difference === 0 && preferred === 'gitcode') newest = gitcode;
   }
-  if (primaryRelease || secondaryRelease) return primaryRelease ?? secondaryRelease;
-  if (first.status === 'rejected' || second.status === 'rejected') throw new Error('暂时无法查询发布版本。');
-  return null;
+  if (!newest) {
+    if (githubResult.status === 'rejected' || gitcodeResult.status === 'rejected') throw new Error('暂时无法查询发布版本。');
+    return null;
+  }
+  const matchingGitHub = github && compareVersions(github.tag, newest.tag) === 0 ? github : null;
+  const matchingGitCode = gitcode && compareVersions(gitcode.tag, newest.tag) === 0 ? gitcode : null;
+  return {
+    ...newest, downloadUrl: newest.downloadUrl ?? matchingGitHub?.downloadUrl ?? matchingGitCode?.downloadUrl, mirrorTag: gitcode?.tag,
+    pages: {
+      github: matchingGitHub?.url ?? releaseRepositoryUrl('github', repositories.github) + '/releases',
+      gitcode: matchingGitCode?.url ?? releaseRepositoryUrl('gitcode', repositories.gitcode) + '/releases',
+    },
+  } satisfies ReleaseUpdate;
 }

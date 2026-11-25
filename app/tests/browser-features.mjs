@@ -1,5 +1,6 @@
 import { browser, wait } from './cdp.mjs';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 
 const origin = process.env.LEAPMORE_DEMO_ORIGIN ?? 'http://127.0.0.1:5175/';
 const b = await browser(origin, 390, 844);
@@ -234,12 +235,14 @@ try {
   await match(/退出登录？/);
   await click('取消');
   await click('关于 LeapMore');
-  await match(/LeapMore 0\.1\.1/);
+  const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
+  assert.ok((await b.run('document.querySelector("dialog[open] .sub").textContent')).includes(packageVersion));
   await b.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true });
-  const repositoryLinks = await b.run(`[...document.querySelectorAll('dialog[open] a')].map(link => [link.href, link.querySelector('small')?.innerText])`);
+  const repositoryLinks = await b.run(`[...document.querySelectorAll('dialog[open] .sec a.row')].map(link => [link.href, link.querySelector('small')?.innerText])`);
   const repositoryUrls = ['https://github.com/MiRaToo/LeapMore', 'https://gitcode.com/MiraRato/LeapMore'];
   assert.deepEqual(repositoryLinks, repositoryUrls.map(url => [url, url]));
   assert.ok(await b.run(`[...document.querySelectorAll('dialog[open] a small')].every(label => label.offsetWidth >= label.scrollWidth)`));
+  assert.equal(await b.run("document.querySelector('dialog a[href*=mirato66]').href"), 'https://leapmore.mirato66.cloud/');
   await click('GitCode', '[aria-label="首选更新源"] button');
   await b.click('dialog[open] [aria-label=关闭]');
   await click('关于 LeapMore');

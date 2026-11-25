@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import licenseText from '../../../../LICENSE?raw';
+import { AboutSheet } from './AppUpdates';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
@@ -15,24 +15,10 @@ import type { AndroidBackgroundCheck, AppIcon } from '../../platform/settings';
 import type { OperationMode } from '../../platform/operationAuth';
 import { themeAccents, themeModes, useSetting } from '../../data/preferences';
 import type { ThemeAccent, ThemeMode } from '../../data/preferences';
-import { checkUpdates, compareVersions, gitcodeRepository, githubRepository, packageFormats, releasePlatform, releaseRepositoryUrl, validReleaseRepository } from '../../data/releases';
-import type { PublishedRelease, ReleaseSource } from '../../data/releases';
 import { AppBar, Hint, Row, Section, Seg, Sheet, SheetButtons, asset, stamp } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
 import { Diagnostics } from './Diagnostics';
 import { AccountProfile } from './AccountProfile';
-
-function configuredRepository(value: string | undefined, fallback: string) {
-  const path = value?.trim() ?? '';
-  return validReleaseRepository(path) ? path : fallback;
-}
-
-const releaseRepositories = {
-  github: configuredRepository(import.meta.env.VITE_RELEASE_REPOSITORY, githubRepository),
-  gitcode: configuredRepository(import.meta.env.VITE_GITCODE_RELEASE_REPOSITORY, gitcodeRepository),
-};
-const releaseLabels = { github: 'GitHub', gitcode: 'GitCode' };
-const releaseSources = Object.entries(releaseLabels) as [ReleaseSource, string][];
 
 const appIcons = [
   ['simple', '白底简洁版', 'leaplink-icon-simple.png'], ['original', '原版', 'leaplink-icon.png'],
@@ -76,66 +62,6 @@ export function AppAppearance() {
     </Section>
     <AppIconSettings />
   </div></>;
-}
-
-type ReleaseCheck = { status: 'idle' | 'checking' | 'unavailable' } | { status: 'ready'; release: PublishedRelease | null };
-
-function AboutSheet({ close }: { close: () => void }) {
-  const [preferred, setPreferred] = useSetting<ReleaseSource>('updateSource', 'github');
-  const [result, setResult] = useState<ReleaseCheck>({ status: 'idle' });
-  const source = preferred === 'gitcode' ? 'gitcode' : 'github';
-  const checking = result.status === 'checking';
-  const platform = releasePlatform(Capacitor.getPlatform());
-  const [linkError, setLinkError] = useState('');
-  function openLink(event: React.MouseEvent<HTMLAnchorElement>) {
-    if (platform !== 'openharmony') return;
-    event.preventDefault();
-    setLinkError('');
-    void nativeSettings.openRelease({ url: event.currentTarget.href }).catch(() => setLinkError('无法打开系统浏览器。'));
-  }
-  async function check() {
-    setLinkError('');
-    setResult({ status: 'checking' });
-    try {
-      const release = await checkUpdates(source, releaseRepositories, platform);
-      setResult({ status: 'ready', release });
-    } catch {
-      setResult({ status: 'unavailable' });
-    }
-  }
-  const latest = result.status === 'ready' ? result.release : null;
-  const status = result.status === 'unavailable' ? '暂时无法查询发布版本。' : result.status !== 'ready' ? '' :
-    !latest ? '发布源暂无 ' + packageFormats[platform] + ' 安装包。' :
-    compareVersions(latest.tag, __LEAPMORE_VERSION__) > 0 ? '有新版本可用。' : '当前已是最新版本。';
-  return <Sheet title="关于 LeapMore" sub={'LeapMore ' + __LEAPMORE_VERSION__} close={close} showClose>
-    <p className="confirm-desc">{disclaimer}</p>
-    <Section title="首选更新源">
-      <Seg current={source} options={releaseSources} disabled={checking}
-        choose={next => { setPreferred(next); setResult({ status: 'idle' }); }} label="首选更新源" />
-      {releaseSources.map(([key, label]) => {
-        const url = releaseRepositoryUrl(key, releaseRepositories[key]);
-        return <a key={key} className="row tap" href={url} onClick={openLink} target="_blank" rel="noreferrer">
-          <span className="t">{label}<small>{url}</small></span>
-          <span className="v"><Icon name="external" size={16} /></span>
-        </a>;
-      })}
-    </Section>
-    <button className="btn accent" onClick={() => void check()} disabled={checking}>{checking ? '正在检查…' : '检查更新'}</button>
-    {status && <p role="status">{status}</p>}
-    {latest?.downloadUrl && compareVersions(latest.tag, __LEAPMORE_VERSION__) > 0 &&
-      <a className="btn accent" href={latest.downloadUrl} onClick={openLink} target="_blank" rel="noreferrer">下载 {latest.tag} · {packageFormats[platform]}</a>}
-    {latest && <a className="btn secondary" href={latest.url} onClick={openLink} target="_blank" rel="noreferrer">
-      {releaseLabels[latest.source]} · 查看 {latest.tag}{latest.prerelease ? ' · 预发布' : ''}
-    </a>}
-    {latest && platform !== 'android' && <p className="tiny muted">{platform === 'ios' ?
-      '未签名 IPA 需为主应用和小组件签名，再用原安装方式更新。' : '未签名 HAP 需使用匹配的证书及 Profile 签名后安装。'}</p>}
-    {linkError && <p role="status">{linkError}</p>}
-    <details className="about-license">
-      <summary>开源许可 · GNU GPL v3.0</summary>
-      <p>版权所有 © 2026 MiRaToo。本软件按 GNU GPL v3.0 授权并无担保提供，可按许可条款再分发。</p>
-      <pre className="about-license-text" tabIndex={0}>{licenseText}</pre>
-    </details>
-  </Sheet>;
 }
 
 export function Mine() {

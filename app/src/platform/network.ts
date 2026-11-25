@@ -2,7 +2,7 @@ import { failureFacts, failureLabels, type FailureKind } from '../data/serviceFa
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 
 const arkNet = registerPlugin<{ request(options: {
-  url: string; method: string; headers: Record<string, string>; body?: string; binary?: boolean;
+  url: string; method: string; headers: Record<string, string>; body?: string; binary?: boolean; probe?: boolean;
 }): Promise<{ status: number; data: string }> }>('LeapNet');
 
 export const harmonyRequest = arkNet.request;

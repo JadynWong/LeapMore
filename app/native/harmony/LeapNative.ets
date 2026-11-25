@@ -30,7 +30,10 @@ export class LeapSettings extends CapacitorPlugin {
     this.registerMethod('openAmap', call => { this.openAmap(call); });
     this.registerMethod('openRelease', call => {
       const address = call.getString('url');
-      if (!/^https:\/\/(github\.com|gitcode\.com)\//.test(address)) { reject(call, '无效发布地址'); return; }
+      const isReleaseSite = /^https:\/\/(github\.com|gitcode\.com)\//.test(address);
+      if (!isReleaseSite && address !== 'https://leapmore.mirato66.cloud/' && address !== 'https://pan.quark.cn/s/9e6168a73f21') {
+        reject(call, '无效外部链接'); return;
+      }
       this.context.startAbility({ action: 'ohos.want.action.viewData', uri: address, entities: ['entity.system.browsable'] })
         .then(() => call.resolve()).catch(() => reject(call, '无法打开系统浏览器'));
     });
@@ -310,13 +313,14 @@ export class LeapNet extends CapacitorPlugin {
   private async request(call: PluginCall): Promise<void> {
     const address = call.getString('url');
     const input = call.getString('method');
-    if (!/^https?:\/\//.test(address) || !['GET', 'POST'].includes(input)) { reject(call, '无效请求'); return; }
+    if (!/^https?:\/\//.test(address) || !['GET', 'POST', 'HEAD'].includes(input)) { reject(call, '无效请求'); return; }
     const binary = call.getBoolean('binary');
+    const probe = call.getBoolean('probe');
     const client = http.createHttp();
     try {
       const options: http.HttpRequestOptions = {
-        method: input === 'POST' ? http.RequestMethod.POST : http.RequestMethod.GET,
-        header: call.getObject('headers'), usingCache: false, connectTimeout: 10000, readTimeout: 20000,
+        method: input === 'POST' ? http.RequestMethod.POST : input === 'HEAD' ? http.RequestMethod.HEAD : http.RequestMethod.GET,
+        header: call.getObject('headers'), usingCache: false, connectTimeout: probe ? 6000 : 10000, readTimeout: probe ? 6000 : 20000,
         expectDataType: binary ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
       };
       if (input === 'POST') options.extraData = call.getString('body');

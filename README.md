@@ -10,7 +10,9 @@
 
 当前正式版为 **0.1.1**。在 [下载 LeapMore 0.1.1](https://github.com/MiRaToo/LeapMore/releases/tag/v0.1.1) 页面选择对应系统的安装包。Android 可下载 APK 覆盖安装。iOS 的主应用和小组件、鸿蒙 HAP 均需使用自己的有效签名安装。自行编译可参考[源码构建指南](app/README.md)。
 
-在 App 中打开「我的 → 关于 LeapMore → 检查更新」，可查询 GitHub 和 GitCode 上适用于当前系统的版本，包括预发布。Android 查找 APK，iOS 查找 IPA，鸿蒙查找 HAP。两边版本相同时优先使用所选更新源。GitHub 有新版本时可直接下载本端附件。未签名的 IPA 和 HAP 需按原安装方式签名后更新。
+此前已安装 0.1.1 的车主，请从本页手动下载并覆盖安装一次，以获得自动更新提醒。
+
+打开 App 或从后台返回时会自动检查更新。可以跳过当前版本，也可以在「我的 → 关于 LeapMore」关闭自动提醒，随时手动检查。点击「检查更新」会显示安装包、各下载页面和官网的访问结果，也可以直接下载本平台安装包。更新提示会按当前系统选取安装包，并提供 GitHub、GitCode 和夸克网盘入口。GitCode 是同步镜像，版本和附件可能晚于 GitHub，使用网盘时请核对文件版本。[GitCode 发布页](https://gitcode.com/MiraRato/LeapMore/releases) · [夸克网盘备用下载](https://pan.quark.cn/s/9e6168a73f21) · [LeapMore 官网](https://leapmore.mirato66.cloud/)
 
 ## 界面与功能
 

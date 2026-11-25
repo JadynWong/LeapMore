@@ -11,6 +11,7 @@ import { VehicleVisualProvider } from './features/appearance/VehicleModel';
 import { ChargeDetail, RecordsPage, RecordsSource, TripDetail } from './features/records/pages';
 import { EnergyPage } from './features/records/Energy';
 import { HAConnect } from './features/records/HA';
+import { AppUpdateProvider } from './features/settings/AppUpdates';
 import { AmapSettings, AppAppearance, BackgroundGuide, Mine, OperationPin, States } from './features/settings/pages';
 import { PublishWidget, WidgetAction, WidgetControl, WidgetPreview } from './features/vehicle/Widgets';
 import { CommandProvider } from './features/vehicle/commands';
@@ -173,5 +174,5 @@ export default function App({ widgetControl }: { widgetControl: WidgetControlReq
   if (widgetControl) return <CommandProvider onClose={widgetBridge.closeControl}><ControlsProvider>
     <WidgetControl request={widgetControl} />
   </ControlsProvider></CommandProvider>;
-  return <CommandProvider><ControlsProvider><VehicleVisualProvider><NativeLinks /><PublishWidget /><Screen /></VehicleVisualProvider></ControlsProvider></CommandProvider>;
+  return <CommandProvider><ControlsProvider><VehicleVisualProvider><NativeLinks /><PublishWidget /><AppUpdateProvider><Screen /></AppUpdateProvider></VehicleVisualProvider></ControlsProvider></CommandProvider>;
 }

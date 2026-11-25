@@ -711,7 +711,7 @@ try {
   assert.match(diagnostics.csv, zip ? /viewerSha256/ : /modelType""\s*:\s*2/);
   assert.match(diagnostics.csv, /"powertrainReason","no-fuel-range-evidence"/);
   if (!zip) assert.match(diagnostics.csv, /"fallback"/);
-  assert.match(diagnostics.csv, /"build","4"/);
+  assert.ok(diagnostics.csv.includes('"build","' + JSON.parse(readFileSync(new URL('../package.json', import.meta.url))).buildNumber + '"'));
   assert.match(diagnostics.csv, /"abortCheckFallback","true"/);
   assert.match(diagnostics.csv, /"check.account","[^\r\n]*404/);
   assert.match(diagnostics.csv, /"check.list","[^\r\n]*辆授权车辆/);
