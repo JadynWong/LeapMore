@@ -214,7 +214,7 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
         CAPPluginMethod(name: "clear", returnType: CAPPluginReturnPromise),
         CAPPluginMethod(name: "take", returnType: CAPPluginReturnPromise)
     ]
-    private let storage = UserDefaults(suiteName: "group.com.leapmore.app")
+    private let storage = LeapWidgetStorage.defaults
 
     @objc func update(_ call: CAPPluginCall) {
         guard let summary = call.getObject("summary"),

@@ -44,7 +44,7 @@ private struct Provider: TimelineProvider {
     }
 
     private func read(date: Date) -> VehicleEntry {
-        let prefs = UserDefaults(suiteName: "group.com.leapmore.app")
+        let prefs = LeapWidgetStorage.defaults
         let value = prefs?.data(forKey: "vehicle-summary").flatMap { try? JSONDecoder().decode(Snapshot.self, from: $0) } ?? Snapshot()
         return VehicleEntry(date: date, value: value, updated: prefs?.object(forKey: "vehicle-summary-at") as? Date)
     }

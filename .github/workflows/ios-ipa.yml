@@ -61,3 +61,32 @@ jobs:
           name: LeapMore-iOS-unsigned
           path: ${{ runner.temp }}/LeapMore-iOS-unsigned.ipa
           if-no-files-found: error
+      - name: Preserve App Group entitlements for SideStore
+        run: |
+          set -euo pipefail
+          project="$PWD/ios/App"
+          cd "$RUNNER_TEMP"
+          app=Payload/App.app
+          widget="$app/PlugIns/LeapWidget.appex"
+          shopt -s nullglob
+          for framework in "$app"/Frameworks/*.framework; do
+            codesign --force --sign - "$framework"
+          done
+          for library in "$app"/Frameworks/*.dylib; do
+            codesign --force --sign - "$library"
+          done
+          codesign --force --sign - --entitlements "$project/LeapWidget/LeapWidget.entitlements" "$widget"
+          codesign --force --sign - --entitlements "$project/App/LeapMore.entitlements" "$app"
+          codesign --verify --deep --strict "$app"
+          for bundle in "$app" "$widget"; do
+            codesign --display --xml --entitlements - "$bundle" > leapmore-entitlements.plist
+            group=$(/usr/libexec/PlistBuddy -c 'Print :com.apple.security.application-groups:0' leapmore-entitlements.plist)
+            test "$group" = group.com.leapmore.app
+          done
+          ditto -c -k --keepParent Payload LeapMore-iOS-SideStore.ipa
+          unzip -tq LeapMore-iOS-SideStore.ipa
+      - uses: actions/upload-artifact@v4
+        with:
+          name: LeapMore-iOS-SideStore
+          path: ${{ runner.temp }}/LeapMore-iOS-SideStore.ipa
+          if-no-files-found: error

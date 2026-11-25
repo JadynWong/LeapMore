@@ -37,6 +37,10 @@ cd android
 
 导入后可在首页选择连接 Home Assistant，填写具有受信任证书的 HTTPS 地址，并选择「手动输入长期访问令牌」。令牌仅在 App 内填写，不需要写入 GitHub Actions。
 
+### SideStore（保留桌面小组件）
+
+从同一次构建下载 `LeapMore-iOS-SideStore`。这份 IPA 使用临时签名写入主 App 和小组件的 App Group 权限，仍需 SideStore 重签安装。安装时选择 **Keep App Extensions (Register App ID for Each Extension)**，让 SideStore 为主 App 和小组件分别配置描述文件。打开 LeapMore 加载车况后，再检查主屏幕小组件是否更新。
+
 ## 鸿蒙
 
 准备 DevEco Studio 与支持 API 26 的 HarmonyOS SDK。按 [OpenHarmony Capacitor 适配器](https://gitcode.com/CPF-Ionic/openHarmony-capacitor)的说明准备 [OpenSSL](https://gitcode.com/li_in/openharmony-capacitor-openssl3.5)。如果 SDK 适配器需要 OpenSSL 文件，将 `LEAPMORE_OHOS_OPENSSL_DIR` 设置为其目录。执行 `pnpm native:harmony` 后，在 DevEco Studio 打开生成的 `app/openharmony` 工程，安装模块依赖，配置签名并构建 HAP。
