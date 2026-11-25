@@ -41,7 +41,7 @@ jobs:
           ditto leapmore-ios/Build/Products/Release-iphoneos/App.app Payload/App.app
           app=Payload/App.app
           executable=$(/usr/libexec/PlistBuddy -c 'Print CFBundleExecutable' "$app/Info.plist")
-          lipo -verify_arch arm64 "$app/$executable"
+          lipo "$app/$executable" -verify_arch arm64
           xcrun vtool -arch arm64 -show-build "$app/$executable" | grep -Eq 'platform[[:space:]]+IOS$'
           while IFS= read -r -d '' file; do
             if codesign --display "$file" >/dev/null 2>&1; then
