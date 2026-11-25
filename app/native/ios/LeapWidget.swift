@@ -13,6 +13,7 @@ private struct Snapshot: Decodable {
     var inside: String? = nil
     var locked: String? = nil
     var odometer: String? = nil
+    var colorScheme: String? = nil
     var lockAction: String? = nil
     var climateOn: Bool? = nil
     var trunkOpen: Bool? = nil
@@ -57,134 +58,168 @@ private struct Card: View {
     let entry: VehicleEntry
     @Environment(\.widgetFamily) private var family
     @Environment(\.colorScheme) private var scheme
-    private var background: Color {
-        if family == .systemMedium {
-            return scheme == .dark ? Color(red: 0.106, green: 0.157, blue: 0.176) : Color(red: 0.957, green: 0.976, blue: 0.984)
-        }
-        return scheme == .dark ? Color(red: 0.10, green: 0.19, blue: 0.17) : Color(red: 0.90, green: 0.95, blue: 0.93)
-    }
-    private var tile: Color { scheme == .dark ? Color(red: 0.153, green: 0.220, blue: 0.247) : Color(red: 0.898, green: 0.929, blue: 0.945) }
     private var item: Snapshot { entry.value }
+    private var small: Bool { family == .systemSmall }
+    private var dark: Bool { item.colorScheme.map { $0 == "dark" } ?? (scheme == .dark) }
+    private var background: Color { palette(0xf4f9fb, 0x1b282d) }
+    private var tile: Color { palette(0xe5edf1, 0x27383f) }
+    private var ink: Color { palette(0x17313b, 0xedf4f5) }
+    private var muted: Color { palette(0x49616a, 0xa7bbc0) }
+    private var accent: Color { palette(0x176556, 0x90dcc9) }
+    private var selected: Color { palette(0xd5ebe4, 0x294a43) }
     private var state: String { entry.stale && entry.updated != nil ? "缓存车况" : item.state ?? "状态未知" }
 
-    @ViewBuilder
+    private func palette(_ light: UInt32, _ darkColor: UInt32) -> Color {
+        let rgb = dark ? darkColor : light
+        return Color(red: Double(rgb >> 16) / 255, green: Double((rgb >> 8) & 255) / 255, blue: Double(rgb & 255) / 255)
+    }
+
     private func metric(_ title: String, value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.caption2)
+            Text(title).font(.caption2).foregroundStyle(muted)
             Text(value).font(.caption.weight(.semibold)).monospacedDigit()
         }
         .lineLimit(1).minimumScaleFactor(0.65).frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    @ViewBuilder
-    private func actionLabel(_ title: String, systemImage: String, active: Bool) -> some View {
-        if family == .systemMedium {
-            VStack(spacing: 3) {
-                Image(systemName: systemImage).font(.system(size: 14, weight: .medium))
-                Text(title).font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.75)
-            }
-            .frame(maxWidth: .infinity, minHeight: 38)
-            .background(active ? Color.green.opacity(0.22) : tile, in: RoundedRectangle(cornerRadius: 11))
-        } else {
-            Label(title, systemImage: systemImage).font(.caption2).lineLimit(1)
-                .frame(maxWidth: .infinity).padding(.vertical, 5).background(.green.opacity(0.16), in: RoundedRectangle(cornerRadius: 8))
-        }
+        .padding(.horizontal, 7).padding(.vertical, 6)
+        .background(tile, in: RoundedRectangle(cornerRadius: 10))
     }
 
     @ViewBuilder
     private func action(_ title: String, systemImage: String, key: String, permitted: Bool?, active: Bool = false) -> some View {
-        let label = actionLabel(title, systemImage: systemImage, active: active)
-        if family == .systemSmall, #available(iOSApplicationExtension 17.0, *), permitted == true, !entry.stale {
+        let label = VStack(spacing: 3) {
+            Image(systemName: systemImage).font(.system(size: 14, weight: .medium))
+            Text(title).font(.system(size: 11)).lineLimit(1).minimumScaleFactor(0.75)
+        }
+        .foregroundStyle(active ? accent : ink)
+        .frame(maxWidth: .infinity, minHeight: small ? 34 : 38)
+        .background(active ? selected : tile, in: RoundedRectangle(cornerRadius: 11))
+        if small, #available(iOSApplicationExtension 17.0, *), permitted == true, !entry.stale {
             Button(intent: VehicleActionIntent(key)) { label }.buttonStyle(.plain)
-        } else if family != .systemSmall, permitted == true, !entry.stale,
+        } else if !small, permitted == true, !entry.stale,
                   let url = URL(string: "com.leapmore.app://widget/action?action=" + key) {
             Link(destination: url) { label }
         } else { label.opacity(0.65) }
     }
 
-    private var fullActions: some View {
-        HStack(spacing: family == .systemMedium ? 5 : 4) {
-            action(item.lockAction ?? "解锁", systemImage: family == .systemMedium && item.lockAction == "解锁" ? "lock.open" : "lock",
-                   key: "lock", permitted: item.canLock, active: item.lockAction == "上锁")
+    private var actions: some View {
+        let lockTitle = item.lockAction ?? "解锁"
+        return HStack(spacing: 5) {
+            action(lockTitle, systemImage: lockTitle == "解锁" ? "lock.open" : "lock",
+                   key: "lock", permitted: item.canLock, active: lockTitle == "上锁")
             action("空调", systemImage: "fan", key: "climate", permitted: item.canControl, active: item.climateOn == true)
-            action("后备箱", systemImage: "car", key: "trunk", permitted: item.canControl, active: item.trunkOpen == true)
-            action("寻车", systemImage: "speaker.wave.2", key: "find", permitted: item.canControl)
+            if !small {
+                action("后备箱", systemImage: "car", key: "trunk", permitted: item.canControl, active: item.trunkOpen == true)
+                action("寻车", systemImage: "speaker.wave.2", key: "find", permitted: item.canControl)
+            }
         }
     }
 
-    private func mediumMetric(_ title: String, value: String, unit: String) -> some View {
+    private func headline(_ title: String, value: String, unit: String) -> some View {
         let hasUnit = value.hasSuffix(unit)
         return VStack(alignment: .leading, spacing: 2) {
             HStack(alignment: .firstTextBaseline, spacing: unit == "%" ? 0 : 3) {
                 Text(hasUnit ? String(value.dropLast(unit.count)).trimmingCharacters(in: .whitespaces) : value)
-                    .font(.system(size: 26, weight: .bold)).monospacedDigit()
-                if hasUnit { Text(unit).font(.system(size: 12, weight: .semibold)) }
+                    .font(.system(size: small ? 22 : family == .systemLarge ? 32 : 26, weight: .bold)).monospacedDigit()
+                if hasUnit { Text(unit).font(.system(size: small ? 10 : 12, weight: .semibold)) }
             }
             .lineLimit(1).minimumScaleFactor(0.65)
-            Text(title).font(.system(size: 11)).foregroundStyle(.secondary)
+            Text(title).font(.system(size: 11)).foregroundStyle(muted)
         }
         .frame(maxWidth: .infinity, alignment: .leading)
     }
 
-    private var mediumContent: some View {
+    private var range: some View {
+        headline(item.fuel?.isEmpty == false ? "综合续航" : "续航", value: item.range ?? "— km", unit: "km")
+    }
+
+    private var chargeBadge: some View {
         let charging = item.chargeStatus == "charging"
-        return VStack(spacing: 3) {
-            HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
-                    mediumMetric(item.fuel?.isEmpty == false ? "综合续航" : "续航", value: item.range ?? "— km", unit: "km")
-                    Text(state).font(.system(size: 11)).foregroundStyle(.secondary).lineLimit(1)
-                }
-                mediumMetric("电量", value: item.soc ?? "—", unit: "%")
-                VStack(alignment: .trailing, spacing: 3) {
-                    Image(systemName: "car.fill").font(.system(size: 23))
-                    Label(item.charging ?? "状态未知", systemImage: charging ? "bolt.fill" : "powerplug")
-                        .font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.75)
-                        .padding(.horizontal, 4).padding(.vertical, 3)
-                        .background(charging || item.chargeStatus == "done" ? Color.green.opacity(0.22) : tile,
-                                    in: RoundedRectangle(cornerRadius: 5))
-                    if let power = item.power, !power.isEmpty { Text(power).font(.system(size: 10)).lineLimit(1) }
-                }
-                .frame(maxWidth: .infinity, alignment: .trailing)
-            }
-            Spacer(minLength: 2)
-            fullActions
+        let highlighted = charging || item.chargeStatus == "done"
+        return Label(item.charging ?? "状态未知", systemImage: charging ? "bolt.fill" : "powerplug")
+            .font(.system(size: 10, weight: .semibold)).lineLimit(1).minimumScaleFactor(0.75)
+            .foregroundStyle(highlighted ? accent : muted)
+            .padding(.horizontal, 4).padding(.vertical, 3)
+            .background(highlighted ? selected : tile, in: RoundedRectangle(cornerRadius: 5))
+    }
+
+    @ViewBuilder
+    private var power: some View {
+        if let value = item.power, !value.isEmpty {
+            Text(value).font(.system(size: 10, weight: .semibold)).lineLimit(1)
         }
     }
 
-    private var otherContent: some View {
-        VStack(alignment: .leading, spacing: family == .systemSmall ? 4 : 7) {
-            HStack(alignment: .firstTextBaseline) {
-                Text(item.range ?? "— km").font(.title2.bold()).monospacedDigit().lineLimit(1).minimumScaleFactor(0.6)
-                if family != .systemSmall {
-                    Spacer(minLength: 4)
-                    Text(state).font(.caption2).lineLimit(1)
+    private var header: some View {
+        HStack(alignment: .top, spacing: small ? 4 : 8) {
+            VStack(alignment: .leading, spacing: 2) {
+                range
+                if !small { Text(state).font(.system(size: 11)).foregroundStyle(muted).lineLimit(1) }
+            }
+            if family != .systemLarge { headline("电量", value: item.soc ?? "—", unit: "%") }
+            if !small {
+                VStack(alignment: .trailing, spacing: 3) {
+                    Image(systemName: "car.fill")
+                        .font(.system(size: family == .systemLarge ? 42 : 23))
+                        .accessibilityHidden(true)
+                    if family == .systemMedium {
+                        HStack(spacing: 4) {
+                            chargeBadge
+                            power
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .trailing)
+            }
+        }
+    }
+
+    private func level(_ title: String, systemImage: String, value: String?, tint: Color) -> some View {
+        let percent = value.flatMap { Double($0.dropLast($0.hasSuffix("%") ? 1 : 0)) }
+        let fraction = min(100, max(0, percent ?? 0)) / 100
+        return HStack(spacing: 6) {
+            Label(title, systemImage: systemImage).foregroundStyle(muted)
+            GeometryReader { proxy in
+                Capsule().fill(tile).overlay(alignment: .leading) {
+                    Capsule().fill(tint).frame(width: proxy.size.width * CGFloat(fraction))
                 }
             }
-            Text([item.soc ?? "—", item.charging ?? "状态未知", family == .systemSmall ? nil : item.power].compactMap { $0 }.filter { !$0.isEmpty }.joined(separator: " · "))
-                .font(.caption).lineLimit(1)
+            .frame(height: 5).accessibilityHidden(true)
+            Text(percent == nil ? "—" : value ?? "—").monospacedDigit().frame(minWidth: 30, alignment: .trailing)
+        }
+        .font(.system(size: 11)).lineLimit(1)
+    }
+
+    var body: some View {
+        let content = VStack(alignment: .leading, spacing: family == .systemLarge ? 7 : 3) {
+            header
             if family == .systemLarge {
-                if let fuel = item.fuel, !fuel.isEmpty { Label("油量 " + fuel, systemImage: "fuelpump").font(.caption) }
-                Spacer(minLength: 0)
+                VStack(spacing: 5) {
+                    level("电量", systemImage: "battery.100", value: item.soc, tint: accent)
+                    if let fuel = item.fuel, !fuel.isEmpty {
+                        level("油量", systemImage: "fuelpump", value: fuel, tint: palette(0xa46a1b, 0xe2ac65))
+                    }
+                }
+            }
+            if family != .systemMedium {
+                HStack {
+                    chargeBadge
+                    if family == .systemLarge {
+                        Spacer(minLength: 4)
+                        power
+                    }
+                }
+            }
+            if family == .systemLarge {
                 HStack(spacing: 6) {
-                    metric("车门", value: item.locked ?? "—")
+                    metric("车门", value: item.locked == "锁状态未知" ? "—" : item.locked ?? "—")
                     metric("车内温度", value: item.inside ?? "—")
                     if let distance = item.odometer, !distance.isEmpty { metric("总里程", value: distance) }
                 }
             }
-            if family == .systemSmall {
-                HStack(spacing: 4) {
-                    action(item.lockAction ?? "解锁", systemImage: "lock", key: "lock", permitted: item.canLock)
-                    action("空调", systemImage: "fan", key: "climate", permitted: item.canControl)
-                }
-            } else { fullActions }
+            Spacer(minLength: 2)
+            actions
         }
-    }
-
-    var body: some View {
-        let content = Group {
-            if family == .systemMedium { mediumContent }
-            else { otherContent }
-        }
+        .foregroundStyle(ink)
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
         .widgetURL(URL(string: "com.leapmore.app://widget/action?action=open"))
         if #available(iOSApplicationExtension 17.0, *) {

@@ -41,6 +41,8 @@ cd android
 
 从同一次构建下载 `LeapMore-iOS-SideStore`。这份 IPA 使用临时签名写入主 App 和小组件的 App Group 权限，仍需 SideStore 重签安装。安装时选择 **Keep App Extensions (Register App ID for Each Extension)**，让 SideStore 为主 App 和小组件分别配置描述文件。打开 LeapMore 加载车况后，再检查主屏幕小组件是否更新。
 
+iOS 小、中、大三种桌面小组件与 App 内卡片预览使用相同的布局和配色，字体、图标和边距使用 iOS 原生样式。
+
 ## 鸿蒙
 
 准备 DevEco Studio 与支持 API 26 的 HarmonyOS SDK。按 [OpenHarmony Capacitor 适配器](https://gitcode.com/CPF-Ionic/openHarmony-capacitor)的说明准备 [OpenSSL](https://gitcode.com/li_in/openharmony-capacitor-openssl3.5)。如果 SDK 适配器需要 OpenSSL 文件，将 `LEAPMORE_OHOS_OPENSSL_DIR` 设置为其目录。执行 `pnpm native:harmony` 后，在 DevEco Studio 打开生成的 `app/openharmony` 工程，安装模块依赖，配置签名并构建 HAP。
