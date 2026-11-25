@@ -207,7 +207,7 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
     let pluginMethods: [CAPPluginMethod] = ["update", "clear", "take"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
-    private let storage = UserDefaults(suiteName: "group.com.leapmore.app")
+    private let storage = LeapWidgetStorage.defaults
 
     @objc func update(_ call: CAPPluginCall) {
         guard let summary = call.getObject("summary"),
@@ -242,10 +242,10 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
 final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate {
     let identifier = "LeapSettingsPlugin"
     let jsName = "LeapSettings"
-    let pluginMethods: [CAPPluginMethod] = ["open", "openAmap", "saveCsv", "getAppIcon", "setAppIcon"].map {
+    let pluginMethods: [CAPPluginMethod] = ["open", "openAmap", "saveCsv", "saveRewardImage", "getAppIcon", "setAppIcon"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
-    private var csvExport: (call: CAPPluginCall, folder: URL)?
+    private var pendingExport: (call: CAPPluginCall, folder: URL)?
 
     @objc func getAppIcon(_ call: CAPPluginCall) {
         DispatchQueue.main.async {
@@ -294,8 +294,24 @@ final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
             call.reject("CSV 文件无效")
             return
         }
+        exportFile(call, name: name) { file in
+            try text.write(to: file, atomically: true, encoding: .utf8)
+        }
+    }
+
+    @objc func saveRewardImage(_ call: CAPPluginCall) {
+        guard let image = Bundle.main.url(forResource: "wechat-reward-qr", withExtension: "png", subdirectory: "public/assets") else {
+            call.reject("找不到微信赞赏码")
+            return
+        }
+        exportFile(call, name: "LeapMore-微信赞赏码.png") { file in
+            try FileManager.default.copyItem(at: image, to: file)
+        }
+    }
+
+    private func exportFile(_ call: CAPPluginCall, name: String, prepare: @escaping (URL) throws -> Void) {
         DispatchQueue.main.async {
-            guard let controller = self.bridge?.viewController, self.csvExport == nil else {
+            guard let controller = self.bridge?.viewController, self.pendingExport == nil else {
                 call.reject("无法打开系统保存窗口")
                 return
             }
@@ -304,13 +320,13 @@ final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
             let file = folder.appendingPathComponent(name)
             do {
                 try manager.createDirectory(at: folder, withIntermediateDirectories: false)
-                try text.write(to: file, atomically: true, encoding: .utf8)
+                try prepare(file)
             } catch {
                 try? manager.removeItem(at: folder)
-                call.reject("无法准备 CSV 文件")
+                call.reject("无法准备导出文件")
                 return
             }
-            self.csvExport = (call, folder)
+            self.pendingExport = (call, folder)
             let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
             picker.delegate = self
             controller.present(picker, animated: true)
@@ -318,16 +334,16 @@ final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
     }
 
     func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
-        finishCsvExport(saved: !urls.isEmpty)
+        finishExport(saved: !urls.isEmpty)
     }
 
     func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
-        finishCsvExport(saved: false)
+        finishExport(saved: false)
     }
 
-    private func finishCsvExport(saved: Bool) {
-        guard let export = csvExport else { return }
-        csvExport = nil
+    private func finishExport(saved: Bool) {
+        guard let export = pendingExport else { return }
+        pendingExport = nil
         try? FileManager.default.removeItem(at: export.folder)
         export.call.resolve(["saved": saved])
     }

@@ -20,7 +20,7 @@ export const releaseRepositoryUrl = (source: ReleaseSource, repository: string) 
 
 export function installedPackageUrl(current: string, platform: ReleasePlatform, repository: string) {
   if (repository !== githubRepository || !/^\d+\.\d+\.\d+$/.test(current)) return undefined;
-  const suffix = { android: 'android.apk', ios: 'ios-unsigned.ipa', openharmony: 'harmonyos-unsigned.hap' }[platform];
+  const suffix = { android: 'android.apk', ios: compareVersions(current, '0.1.1') > 0 ? 'ios.ipa' : 'ios-unsigned.ipa', openharmony: 'harmonyos-unsigned.hap' }[platform];
   return releaseRepositoryUrl('github', repository) + '/releases/download/v' + current + '/LeapMore-v' + current + '-' + suffix;
 }
 
@@ -59,7 +59,9 @@ export function latestRelease(value: unknown, source: ReleaseSource, repository:
     const files = item.assets.filter((asset: { name?: unknown; state?: string } | null) => typeof asset?.name === 'string' &&
       asset.name.toLowerCase().endsWith(suffix) && (!asset.state || asset.state === 'uploaded'));
     // Published hotfixes may keep an old -build1 copy beside the current generic filename.
-    const asset = files.find((file: { name: string }) => !/-build\d+\b/i.test(file.name)) ?? files[0];
+    const iosName = 'leapmore-v' + item.tag_name.replace(/^v/, '').toLowerCase() + '-ios.ipa';
+    const unified = platform === 'ios' ? files.find((file: { name: string }) => file.name.toLowerCase() === iosName) : undefined;
+    const asset = unified ?? files.find((file: { name: string }) => !/-build\d+\b/i.test(file.name)) ?? files[0];
     if (!asset) continue;
     // GitCode's release list only provides an html_url on the author object.
     const releasePage = item.html_url ?? (source === 'gitcode' ? releaseRepositoryUrl(source, repository) + '/releases' : '');

@@ -6,6 +6,7 @@ import type { Capability, CarState, EnergyDay, Vehicle, VehicleClient } from '..
 import { numberOf } from '../ha/measurements';
 import { displayedRange, namedPowertrain, powertrainRanges } from '../powertrain';
 import { energyRankOf } from '../energyRank';
+import { periodStart } from '../recordPeriod';
 import { maskPhone } from '../phoneMask';
 import { socPercent } from '../vehicleEnergy';
 import type { Charge } from '../ha/measurements';
@@ -41,6 +42,9 @@ export interface CarLogin {
 const cloudAuthErrors = new Set([401, 302002004, 302010202, 302010219]);
 export class CloudSessionExpired extends ServiceFailure {
   constructor(status?: number, code?: number) { super('auth', status, code); }
+}
+export class CarPictureOnly extends Error {
+  constructor() { super('零跑云本次仅提供 2D 外观。'); }
 }
 export class RemoteDeliveryUnknown extends Error {}
 const remoteTimeout = 6_000;
@@ -333,6 +337,8 @@ function mapState(vehicleId: string, vin: string, payload: Record<string, unknow
     sunshadeOpen: sunshade === null || sunshade < 0 || sunshade > 100 ? null : sunshade > 0,
     sunshadePercent: sunshade,
     insideTempC: rawNum(raw, '1349'),
+    batteryMinTempC: rawNum(raw, '1182'),
+    batteryHeating: raw['1186'] === true || rawNum(raw, '1186') === 1,
     outsideTempC: null,
     tirePressureKpa,
     charging: [plug, connection, dc].every(x => x === null) ? 'unknown' : charging,
@@ -457,12 +463,21 @@ export class LiveVehicleClient implements VehicleClient {
     }
   }
 
+  private pictureCarType(vehicleId: string) {
+    const vehicle = this.vehiclesById.get(vehicleId);
+    return vehicle?.carType || diagnosticFamily(vehicle?.model);
+  }
+
   async getCarPicture(vehicleId: string): Promise<string | null> {
     const vin = await this.resolveVin(vehicleId);
-    const res = await this.carGet('v3/api/carpicture/key', { vin, osVersion: '137.0.0.0' }, vin);
-    const data = (res.data && typeof res.data === 'object' ? res.data : {}) as Record<string, unknown>;
-    const url = typeof data.shareBindUrl === 'string' ? data.shareBindUrl : '';
-    return url ? url.replace(/^http:/, 'https:') : null;
+    const res = await this.carGet('v3/api/carpicture/key', { vin }, vin, false, undefined, this.pictureCarType(vehicleId));
+    for (const payload of [record(res.data), res]) {
+      for (const key of ['shareBindUrl', 'url', 'imageUrl', 'picUrl', 'carPic']) {
+        const value = payload[key];
+        if (typeof value === 'string' && /^https?:\/\//i.test(value.trim())) return value.trim().replace(/^http:/i, 'https:');
+      }
+    }
+    return null;
   }
 
   private async getChargePlan(vehicleId: string, timeoutMs = 20_000) {
@@ -518,9 +533,7 @@ export class LiveVehicleClient implements VehicleClient {
   }
 
   async get3DInfo(vehicleId: string): Promise<{ modelType: number; previewUrl: string | null }> {
-    const vin = await this.resolveVin(vehicleId);
-    const res = await this.carGet('v3/api/carpicture/3d/key', { vin, deviceID: this.deviceId, osVersion: '137.0.0.0' }, vin);
-    const data = (res.data && typeof res.data === 'object' ? res.data : {}) as Record<string, unknown>;
+    const { data } = await this.get3DManifest(vehicleId);
     const url = typeof data.shareBindUrl === 'string' ? data.shareBindUrl.replace(/^http:/, 'https:') : null;
     return { modelType: Number(data.modelType || 0), previewUrl: url };
   }
@@ -528,14 +541,15 @@ export class LiveVehicleClient implements VehicleClient {
   async get3DManifest(vehicleId: string, trace?: ModelTrace) {
     trace?.('key');
     const vin = await this.resolveVin(vehicleId);
+    const carType = this.pictureCarType(vehicleId);
     const endpoint = 'v3/api/carpicture/3d/key';
     const manifest = async (params: Record<string, string>) => {
-      const response = await this.carGet(endpoint, params, vin, true);
+      const response = await this.carGet(endpoint, params, vin, true, undefined, carType);
       const data = record(response.data), model = record(data.modelParam);
       const modelType = Number(data.modelType), version = String(data.modelVersion ?? '');
       trace?.('manifest', { httpStatus: num(response._status) ?? undefined, modelType: [1, 2, 3].includes(modelType) ? modelType : undefined,
         modelVersion: /^\d{1,4}(?:\.\d{1,4}){0,3}$/.test(version) ? version : undefined,
-        hasH5Key: !!data.h5Key, hasSrcKey: !!data.srcKey, hasCarType: !!model.carType, hasYear: !!model.year,
+        hasH5Key: !!data.h5Key, hasSrcKey: !!data.srcKey, hasCarType: !!model.carType, hasYear: model.year != null && model.year !== '',
         family: diagnosticFamily(model.carType), year: diagnosticYear(model.year) });
       return data;
     };
@@ -544,22 +558,26 @@ export class LiveVehicleClient implements VehicleClient {
       trace?.('fallback');
       data = await manifest({ vin });
     }
-    return { data, vin };
+    return { data, vin, carType };
   }
 
   async get3DPackages(vehicleId: string, trace?: ModelTrace): Promise<{ h5: ArrayBuffer; src: ArrayBuffer; modelParam: Record<string, unknown> }> {
-    const { data, vin } = await this.get3DManifest(vehicleId, trace);
+    const { data, vin, carType } = await this.get3DManifest(vehicleId, trace);
     const h5Key = String(data.h5Key || '');
     const srcKey = String(data.srcKey || '');
     const modelParam = record(data.modelParam);
-    if (!h5Key || !srcKey || !modelParam.carType || !modelParam.year) {
+    if (Number(data.modelType) === 2) {
+      trace?.('unavailable');
+      throw new CarPictureOnly();
+    }
+    if (Number(data.modelType) === 1 || !h5Key || !srcKey || !modelParam.carType || modelParam.year == null || modelParam.year === '') {
       trace?.('unavailable');
       throw new Error('零跑云未提供本车的 3D 素材。');
     }
     const getZip = async (key: string, kind: 'h5' | 'src'): Promise<ArrayBuffer> => {
       trace?.(kind);
       const params = { vin, key };
-      const headers = await signedHeaders(this.car, this.account, this.deviceId, params, vin);
+      const headers = await signedHeaders(this.car, this.account, this.deviceId, params, vin, carType);
       let httpStatus: number | undefined;
       const bytes = await requestBinary(CAR_BASE + '/carownerservice/v3/api/carpicture/key/package?' + new URLSearchParams(params).toString(),
         { headers, timeoutMs: 180000, onStatus: status => { httpStatus = status; } }).catch(error => {
@@ -724,6 +742,34 @@ export class LiveVehicleClient implements VehicleClient {
     await saveDataset(statusKey, Object.fromEntries(Object.entries(cache).filter(([day]) => day >= keepDays))).catch(() => {});
     if (!res && rows.every(row => row.kwh === null)) throw new Error('暂时无法读取零跑云能耗。');
     return rows.reverse();
+  }
+  async getMileageSummary(vehicleId: string, signal: AbortSignal) {
+    const vin = await this.resolveVin(vehicleId);
+    const end = Date.now(), monthStart = periodStart('month', end);
+    const read = async (from: number) => {
+      signal.throwIfAborted();
+      const response = await this.carGet('v3/api/drivingrecord/mileage/energy/detail', {
+        vin, begintime: String(from), endtime: String(end),
+      }, vin, true);
+      requireCloudResponse(response);
+      return record(response.data);
+    };
+    const month = await read(monthStart);
+    const nonnegative = (v: unknown) => { const n = num(v); return n !== null && n >= 0 ? n : null; };
+    const deliveryDays = nonnegative(month.deliveryDays);
+    let totalEnergy: number | null = null;
+    if (deliveryDays !== null) {
+      const delivered = dayStart(end) - Math.ceil(deliveryDays) * 86_400_000;
+      try {
+        const entire = delivered >= monthStart ? month : await read(delivered);
+        totalEnergy = nonnegative(entire.totalEnergy);
+      } catch (error) { if (signal.aborted || error instanceof CloudSessionExpired) throw error; }
+    }
+    return { deliveryDays, totalKm: nonnegative(month.totalmileage), totalEnergy, monthKm: nonnegative(month.totalAccumulatedMileage),
+      daily: Array.isArray(month.detail) ? month.detail.map(item => {
+        const row = record(item);
+        return { day: String(row.day ?? '').slice(0, 10), km: nonnegative(row.accumulatedMileage) };
+      }) : [] };
   }
   async getEnergyRank(vehicleId: string) {
     const vin = await this.resolveVin(vehicleId);

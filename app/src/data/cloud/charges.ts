@@ -9,6 +9,7 @@ const maxPower = 400;
 
 type Charging = {
   timeline: MetricSample[];
+  minRecordedBatteryTempC?: number;
   type: 'ac' | 'dc' | 'unknown';
   partial: boolean;
 };
@@ -26,6 +27,7 @@ export function sampledCharges(frames: Frame[], capacityKwh: number | null, now:
       id: 'sampled-charge-' + first.at, source: 'live', type: session.type, startedAt: first.at,
       endedAt: ended ? last.at : null, active: !ended, partial: session.partial || partial,
       kwh, socStart, socEnd, gridKwh: null, cost: null, energyBasis: kwh === null ? undefined : 'soc',
+      minRecordedBatteryTempC: session.minRecordedBatteryTempC,
       powerTimeline: session.timeline, powers: session.timeline.flatMap(({ at, value }) => value === null ? [] : [{ at, value }]),
     });
   }
@@ -49,6 +51,10 @@ export function sampledCharges(frames: Frame[], capacityKwh: number | null, now:
       }
       active ??= { timeline: [], type: kind, partial: previous !== false };
       if (active.type === 'unknown') active.type = kind;
+      const temperature = numberOf(frame.data.batteryMinTemp);
+      if (frame.changed.includes('batteryMinTemp') && temperature !== null) {
+        active.minRecordedBatteryTempC = Math.min(active.minRecordedBatteryTempC ?? temperature, temperature);
+      }
       const power = numberOf(frame.data.power);
       active.timeline.push({ at: frame.at, value: power !== null && power > 0 && power <= maxPower ? power : null, soc: socPercent(frame.data.soc) });
     } else if (active) {

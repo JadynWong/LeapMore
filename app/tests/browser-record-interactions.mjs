@@ -18,7 +18,13 @@ async function swipe(from, to, beforeEnd) {
 try {
   await b.run(`localStorage.setItem('leapmore.mode', '"demo"'); localStorage.setItem('leapmore.activeVehicle', '"demo-c10"');
     localStorage.removeItem('leapmore.source');
-    localStorage.setItem('leapmore.energyCards', JSON.stringify({'demo-c10':['stats','rank','trend','breakdown']}));`);
+    localStorage.removeItem('leapmore.energyCards');`);
+  await b.reload();
+  await route('/energy');
+  assert.deepEqual(await b.run('[...document.querySelectorAll("[data-energy-card]")].map(card => card.dataset.energyCard)'),
+    ['monthKm','weekKm','efficiency','rank','trend','totalDays','totalKm','totalKwh','breakdown','cost']);
+  assert.equal(await b.run('document.querySelectorAll(".compact-metric .metric-label > svg").length'), 6);
+  await b.run(`localStorage.setItem('leapmore.energyCards', JSON.stringify({'demo-c10':['stats','rank','trend','breakdown']}))`);
   await b.reload();
   await route('/energy');
   assert.equal(await b.run("JSON.parse(localStorage.getItem('leapmore.theme'))"), 'system');
@@ -30,7 +36,13 @@ try {
   await b.click('[aria-label="编辑"]');
   const order = () => b.run('[...document.querySelectorAll(".energy-card")].map(card => card.dataset.energyCard)');
   const beforeOrder = await order();
-  assert.deepEqual(beforeOrder, ['stats', 'rank', 'trend', 'breakdown', 'cost']);
+  assert.deepEqual(beforeOrder, ['weekKm', 'efficiency', 'rank', 'totalDays', 'totalKm', 'totalKwh', 'monthKm', 'trend', 'breakdown', 'cost']);
+  assert.ok(await b.run(`(() => {
+    const grid = document.querySelector('.energy-grid');
+    const gap = parseFloat(getComputedStyle(grid).columnGap);
+    const tiles = [...grid.children].slice(0,3).map(el => el.getBoundingClientRect());
+    return tiles.every(tile => tile.top === tiles[0].top && Math.abs(3 * tile.width + 2 * gap - grid.clientWidth) < 1);
+  })()`));
   const cardPoint = key => b.run(`(() => {
     const rect = document.querySelector('[data-energy-card="${key}"]').getBoundingClientRect();
     return { x: rect.left + 36, y: rect.top + 46 };
@@ -41,13 +53,13 @@ try {
   assert.ok(await b.run('document.querySelector(".app-view").scrollTop > 50'));
   assert.deepEqual(await order(), beforeOrder);
   await b.run('document.querySelector(".app-view").scrollTop=0');
-  const fromCard = await cardPoint('stats'), toCard = await cardPoint('rank');
+  const fromCard = await cardPoint('weekKm'), toCard = await cardPoint('rank');
   await touch('touchStart', fromCard);
   await wait(280);
-  assert.ok(await b.run('!!document.querySelector("[data-energy-card=stats][data-dragging]")'));
+  assert.ok(await b.run('!!document.querySelector("[data-energy-card=weekKm][data-dragging]")'));
   await touch('touchMove', toCard);
   await touch('touchEnd');
-  assert.deepEqual((await order()).slice(0, 2), ['rank', 'stats']);
+  assert.deepEqual((await order()).slice(0, 3), ['efficiency', 'rank', 'weekKm']);
   await b.run(`document.querySelector('[data-energy-card=cost] h3').scrollIntoView({block:'center'})`);
   const costPoint = await b.run(`(() => {
     const r = document.querySelector('[data-energy-card=cost] h3').getBoundingClientRect();
@@ -101,7 +113,64 @@ try {
   await route('/energy');
   assert.deepEqual(await energyView(), energyBefore);
   assert.equal(await b.run("getComputedStyle(document.querySelector('.trend-card .plot-series')).animationName"), 'none');
+  await route('/home');
+  assert.ok(await b.run(`(() => {
+    const color = selector => getComputedStyle(document.querySelector(selector)).color;
+    return color('.temp-target') === color('.temp-label') && color('.temp-main') !== color('.temp-target');
+  })()`));
+  await route('/climate');
+  assert.ok(await b.run(`(() => {
+    const target = getComputedStyle(document.querySelector('.climate-target'));
+    const cabin = getComputedStyle(document.querySelector('.climate-status b'));
+    return target.color === getComputedStyle(document.querySelector('.climate-stepper .muted')).color &&
+      cabin.color !== target.color && parseFloat(cabin.fontSize) > parseFloat(target.fontSize);
+  })()`));
   await route('/records');
+  assert.equal(await b.run("document.querySelector('[aria-label=行程显示]').title"),'缩略图');
+  const period = async (kind, text) => b.run(`[...document.querySelectorAll('[aria-label=${kind}时间范围] button')].find(el=>el.textContent===${JSON.stringify(text)}).click()`);
+  await period('行程','全');
+  await wait(100);
+  assert.match(await b.run("document.querySelector('.record-total').textContent"), /^6 段/);
+  assert.ok(await b.run(`(() => {
+    const months = [...document.querySelectorAll('.record-month')];
+    const titles = months.map(el => el.querySelector('.month-title').textContent);
+    return months.length > 1 && months.every(el => el.querySelector('button').getAttribute('aria-expanded') === 'false') && new Set(titles).size === months.length &&
+      months.reduce((n, el) => n + parseInt(el.querySelector('button > span').textContent), 0) === 6 &&
+      !document.querySelector('.record-day');
+  })()`));
+  await b.click('.record-month > button');
+  await b.click('.record-month .record-day > summary');
+  assert.ok(await b.run("!!document.querySelector('.record-month .record-day[open] a[href*=trips]')"));
+  await period('行程','年');
+  await wait(100);
+  assert.ok(await b.run("parseInt(document.querySelector('.record-total').textContent)<6"));
+  await swipe({x:270,y:250},{x:80,y:250});
+  await wait(150);
+  assert.equal(await b.run("document.querySelector('[aria-label=充电时间范围] [aria-pressed=true]')?.textContent"),'年');
+  await b.click('.record-month > button');
+  assert.ok(await b.run(`(() => {
+    const month = document.querySelector('.record-month');
+    const links = [...month.querySelectorAll('a[href*="/charges/"]')];
+    return links.length === parseInt(month.querySelector('button > span').textContent) &&
+      links.every(link => link.checkVisibility() && link.querySelector('.charge-thumbnail')) && !month.querySelector('.record-day summary');
+  })()`));
+  await period('充电','全');
+  await wait(100);
+  assert.match(await b.run("document.querySelector('.record-total').textContent"), /^5 次/);
+  for (const range of ['周', '月']) {
+    await period('充电', range);
+    await wait(100);
+    assert.ok(await b.run(`(() => {
+      const links = [...document.querySelectorAll('.record-day a[href*="/charges/"]')];
+      return links.length > 0 && links.length === parseInt(document.querySelector('.record-total').textContent) &&
+        links.every(link => link.checkVisibility()) && !document.querySelector('.record-month, .record-day summary');
+    })()`));
+  }
+  await swipe({x:80,y:250},{x:270,y:250});
+  await wait(150);
+  await period('行程','月');
+  await wait(100);
+  assert.equal(await b.run("document.querySelectorAll('.record-month').length"), 0);
   const daySummary = await b.run(`(() => {
     const summary = document.querySelector('.record-day summary');
     summary.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,detail:1}));

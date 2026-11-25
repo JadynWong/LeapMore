@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { discoverVehicles, vehicleByVin } from '../src/data/ha/discovery.ts';
 import type { RegisteredEntity } from '../src/data/ha/discovery.ts';
-import { framesOf, openingOf } from '../src/data/ha/measurements.ts';
+import { framesOf, lowestBatteryTemperature, openingOf } from '../src/data/ha/measurements.ts';
 import { samplesOf } from '../src/data/ha/schema.ts';
 
 const vin = 'LFB1A2B3C4D000001', secondVin = 'LFB1A2B3C4D000002';
@@ -21,10 +21,21 @@ test('registry discovery uses stable identity and matches only the exact cloud V
   const devices = discoverVehicles(entries, [], entries.filter(e => e.entity_id !== 'device_tracker.hidden')
     .map(e => ({ entity_id: e.entity_id, state: '65' })));
   assert.equal(devices.length, 2);
-  assert.deepEqual(vehicleByVin(devices, vin.toLowerCase())?.mapping, { soc: 'sensor.renamed' });
-  assert.deepEqual(vehicleByVin(devices, secondVin)?.mapping, { soc: 'sensor.second_car' });
+  for (const [car, entity] of [[vin.toLowerCase(), 'sensor.renamed'], [secondVin, 'sensor.second_car']]) {
+    assert.deepEqual(vehicleByVin(devices, car)?.mapping, { soc: entity, batteryMinTemp: { entity, attribute: 'battery_min_temp' } });
+  }
   assert.equal(vehicleByVin(devices, '0001'), undefined);
   assert.equal(vehicleByVin(devices.slice(0, 1), secondVin), undefined);
+});
+
+test('charge temperatures use recorded battery attributes within the session, including zero and negative readings', () => {
+  const entity = 'sensor.car_battery';
+  const entries = [-8, 0, -2, null, -9].map((temperature, i) => ({ entity: entity, at: i + 1,
+    state: '53', attrs: { battery_min_temp: temperature } }));
+  const frames = framesOf(entries, { batteryMinTemp: { entity, attribute: 'battery_min_temp' } });
+  assert.equal(lowestBatteryTemperature(frames, 2, 4), -2);
+  assert.equal(lowestBatteryTemperature(frames, 2, 2), 0);
+  assert.equal(lowestBatteryTemperature([...frames, { at: 4, data: { batteryMinTemp: -8 }, changed: ['speed'] }], 4, 4), null);
 });
 
 test('ambiguous fields and combined range stay unmapped', () => {

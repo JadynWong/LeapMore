@@ -14,15 +14,15 @@
                 <TextView android:id="@+id/widget_soc" style="@style/LeapWidgetReading" android:text="—" />
                 <TextView android:id="@+id/widget_soc_label" style="@style/LeapWidgetLabel" android:text="电量" />
             </LinearLayout>
-            <LinearLayout android:id="@+id/widget_car_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
+            <LinearLayout android:id="@+id/widget_brand_status" android:layout_width="wrap_content" android:layout_height="wrap_content"
                 android:layout_marginStart="3dp" android:gravity="end" android:orientation="vertical" android:visibility="gone">
-                <ImageView android:id="@+id/widget_car_medium" style="@style/LeapWidgetIcon" android:layout_width="72dp" android:layout_height="32dp"
-                    android:scaleType="fitEnd" />
+                <ImageView style="@style/LeapWidgetIcon" android:layout_width="32dp" android:layout_height="32dp"
+                    android:src="@drawable/leap_launcher_simple_icon" />
                 <LinearLayout android:id="@+id/widget_charge_side" android:layout_width="wrap_content" android:layout_height="wrap_content"
                     android:layout_marginTop="2dp" />
             </LinearLayout>
-            <ImageView android:id="@+id/widget_car_large" style="@style/LeapWidgetIcon" android:layout_width="0dp" android:layout_height="54dp"
-                android:layout_weight="1" android:layout_marginStart="10dp" android:scaleType="fitEnd" android:visibility="gone" />
+            <ImageView android:id="@+id/widget_brand_large" style="@style/LeapWidgetIcon" android:layout_width="0dp" android:layout_height="44dp"
+                android:src="@drawable/leap_launcher_simple_icon" android:layout_weight="1" android:layout_marginStart="10dp" android:scaleType="fitEnd" android:visibility="gone" />
         </LinearLayout>
         <LinearLayout android:id="@+id/widget_levels" android:layout_width="match_parent" android:layout_height="wrap_content"
             android:layout_marginTop="4dp" android:orientation="vertical" android:visibility="gone" />

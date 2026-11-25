@@ -58,7 +58,7 @@ function variant(row: Record<string, unknown>, model: string, provider: MarketVa
   const description = [row.vehicleSpecs, row.vehicleType, trim].map(string).join(' ');
   const energy = /增程|REEV/i.test(description) ? '增程' : /纯电|BEV/i.test(description) ? '纯电' :
     energyHint === '增程' ? '增程' : energyHint === '纯电' || bevModels.has(model.toUpperCase()) ? '纯电' : null;
-  return id && /^20\d{2}$/.test(year) && trim && energy ? { id, year, trim, energy, provider } : null;
+  return id && year && trim && energy ? { id, year, trim, energy, provider } : null;
 }
 
 async function historicalC11(signal?: AbortSignal) {
@@ -104,12 +104,12 @@ export async function fetchMarketVariants(model: string, code: string, signal?: 
   if (model.toUpperCase() === 'C11') {
     for (const item of Object.values(await historicalC11(signal))) {
       const row = records(item);
-      const entry = variant({ ...row, vehicleYear: '2023', vehicleModel: string(row.carName).replace(/^C11\s+/i, '') }, model, 'config', '纯电');
+      const entry = variant({ ...row, vehicleYear: row.vehicleYear ?? row.carYear ?? row.year ?? '2023', vehicleModel: string(row.carName).replace(/^C11\s+/i, '') }, model, 'config', '纯电');
       if (entry && !variants.has(entry.id)) variants.set(entry.id, entry);
     }
   }
   const year = String(preferredYear ?? '');
-  if (/^20\d{2}$/.test(year) && ![...variants.values()].some(item => item.year === year)) await collectVariants(year + model, year);
+  if (preferredYear && Number.isInteger(preferredYear) && ![...variants.values()].some(item => item.year === year)) await collectVariants(year + model, year);
   return [...variants.values()].sort((a, b) => b.year.localeCompare(a.year));
 }
 

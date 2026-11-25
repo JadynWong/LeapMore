@@ -1,4 +1,4 @@
 <shape xmlns:android="http://schemas.android.com/apk/res/android">
-    <solid android:color="#d5ebe4" />
+    <solid android:color="@color/widget_selected_light" />
     <corners android:radius="6dp" />
 </shape>

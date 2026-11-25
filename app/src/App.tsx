@@ -20,6 +20,7 @@ import { useModelContext } from './features/context';
 import { SlidingSelector } from './ui/SlidingSelector';
 import { usePageScroll } from './ui/usePageScroll';
 import { Icon } from './ui/Icon';
+import { Sheet, SheetButtons } from './ui/components';
 import { widgetBridge } from './platform/widgets';
 import type { WidgetControlRequest } from './platform/widgets';
 
@@ -83,6 +84,20 @@ function NativeLinks() {
   return null;
 }
 
+function SessionExpiredPrompt({ account }: { account: 'cloud' | 'ha' }) {
+  const navigate = useNavigate();
+  const [dismissed, setDismissed] = useState(false);
+  if (dismissed) return null;
+  const ha = account === 'ha';
+  return <Sheet title={ha ? 'Home Assistant 登录已失效' : '零跑账号登录已失效'} close={() => setDismissed(true)}>
+    <p className="confirm-desc">{ha ? '重新授权后可以继续同步行程和充电记录。' : '请重新登录零跑账号，继续查看车况和使用车辆控制。'}</p>
+    <SheetButtons cancelLabel="稍后" cancel={() => setDismissed(true)} label="重新登录" action={() => {
+      setDismissed(true);
+      navigate(ha ? '/ha' : '/login', { replace: true });
+    }} />
+  </Sheet>;
+}
+
 function Screen() {
   const m = useModelContext();
   const location = useLocation();
@@ -102,6 +117,8 @@ function Screen() {
   const atAppearance = path === '/appearance';
   const diagnosticViewer = path === '/states' && new URLSearchParams(location.search).get('check') === '3d';
   const homeKey = m.booted && !m.expired && m.mode && m.vehicle ? JSON.stringify([m.mode, m.cloudKey, m.vehicle.id]) : '';
+  const expiredAccount = m.expired ? 'cloud' :
+    m.ha.connected && m.ha.expired && (m.mode === 'ha' || m.mode === 'cloud' && m.usesHA) ? 'ha' : null;
   const energyKey = homeKey && (m.mode === 'ha' ? JSON.stringify([homeKey, m.ha.config?.url, m.ha.vin]) : homeKey);
   const [openedEnergy, setOpenedEnergy] = useState('');
   useEffect(() => { if (atEnergy || !energyKey) setOpenedEnergy(energyKey); }, [atEnergy, energyKey]);
@@ -126,7 +143,11 @@ function Screen() {
     } : undefined}>
       <div className={'app-scroll-content' + (atAppearance ? ' appearance-scroll-content' : '')}>
       {homeKey && !diagnosticViewer && (vehicleView || openedVehicle === homeKey) && <VehicleSurfaces key={homeKey} view={vehicleView} />}
-      {!m.booted && !authRoutes.includes(path) ? <p className="loading">正在读取会话…</p> :
+      {!m.booted && !authRoutes.includes(path) ? <Routes>
+        <Route path="/trips/:id" element={<TripDetail restoringSession />} />
+        <Route path="/charges/:id" element={<ChargeDetail restoringSession />} />
+        <Route path="*" element={<p className="loading">正在读取会话…</p>} />
+      </Routes> :
       !m.mode && !publicRoutes.includes(path) && !preview ? <Navigate to="/welcome" replace /> :
       m.expired && !['/login', '/vehicle-access', '/vehicles', '/states', ...mineRoutes].includes(path) ? <Navigate to="/login" replace /> :
       m.mode && !m.vehicle && ![...publicRoutes, '/vehicles', '/states', ...mineRoutes].includes(path) ? <Navigate to="/vehicles" replace /> :
@@ -168,6 +189,7 @@ function Screen() {
     {main && <SlidingSelector nav concealed={navigationHidden} label="主导航" selected={tab} change={index => { if (index !== tab) navigate(tabs[index][0]); }}
       optionLabels={tabs.map(([, label]) => label)} options={tabs.map(([, , icon]) => <Icon name={icon} size={23} />)} />}
     {m.toast && <div className="toast app-toast" role="status">{m.toast}</div>}
+    {m.booted && expiredAccount && <SessionExpiredPrompt key={expiredAccount === 'ha' ? 'ha:' + m.ha.config?.url : 'cloud:' + m.profileScope} account={expiredAccount} />}
   </div>;
 }
 export default function App({ widgetControl }: { widgetControl: WidgetControlRequest | null }) {

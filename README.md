@@ -8,11 +8,14 @@
 
 ## 下载与安装
 
-当前正式版为 **0.1.1**。在 [下载 LeapMore 0.1.1](https://github.com/MiRaToo/LeapMore/releases/tag/v0.1.1) 页面选择对应系统的安装包。Android 可下载 APK 覆盖安装。iOS 的主应用和小组件、鸿蒙 HAP 均需使用自己的有效签名安装。自行编译可参考[源码构建指南](app/README.md)。
+**LeapMore 0.1.2** 提供 Android APK、iOS IPA 和鸿蒙 HAP，每个平台一份。[版本说明与下载](https://github.com/MiRaToo/LeapMore/releases/tag/v0.1.2)
 
-此前已安装 0.1.1 的车主，请从本页手动下载并覆盖安装一次，以获得自动更新提醒。
+| 系统 | 安装方式 |
+| --- | --- |
+| Android | 下载 APK，可覆盖安装之前的正式版。 |
+| iOS / iPadOS | 同一个 IPA 包含主应用和桌面小组件。使用 SideStore 时选择「Keep App Extensions」，安装后打开 App 同步一次车况，再到桌面添加卡片。使用 LiveContainer 可以运行主应用，容器内的小组件无法添加到系统桌面。 |
 
-打开 App 或从后台返回时会自动检查更新。可以跳过当前版本，也可以在「我的 → 关于 LeapMore」关闭自动提醒，随时手动检查。点击「检查更新」会显示安装包、各下载页面和官网的访问结果，也可以直接下载本平台安装包。更新提示会按当前系统选取安装包，并提供 GitHub、GitCode 和夸克网盘入口。GitCode 是同步镜像，版本和附件可能晚于 GitHub，使用网盘时请核对文件版本。[GitCode 发布页](https://gitcode.com/MiraRato/LeapMore/releases) · [夸克网盘备用下载](https://pan.quark.cn/s/9e6168a73f21) · [LeapMore 官网](https://leapmore.mirato66.cloud/)
+打开 App 或从后台返回时会自动检查更新。在「我的 → 关于 LeapMore」可关闭提醒、手动检查或直接下载安装包。GitHub、GitCode 和夸克网盘入口始终可见。GitCode 与网盘更新可能稍晚，下载时请核对版本号。[GitCode 发布页](https://gitcode.com/MiraRato/LeapMore/releases) · [夸克网盘备用下载](https://pan.quark.cn/s/9e6168a73f21) · [LeapMore 官网](https://leapmore.mirato66.cloud/) · [源码构建指南](app/README.md)
 
 ## 界面与功能
 
@@ -21,16 +24,17 @@
 介绍图由 Android 模拟器实拍合成，使用演示数据，地图区域已遮盖。
 
 - 在**车况与远控**中查看续航、胎压和车辆状态。驻车时可按车型和账号权限操作门锁、车窗、后备箱和空调，支持操作密码或系统生物识别。[3D 车况](docs/screenshots/vehicle.png) · [车辆控制](docs/screenshots/controls.png) · [空调与加热](docs/screenshots/climate.png)
-- **行程与充电**显示实时车速、里程、充入电量和功率，以及每日历史明细。长按可从本机删除行程，HA 原始记录会保留。[行程记录](docs/screenshots/trips.png) · [充电记录](docs/screenshots/charges.png)
-- 在**能耗与同步**相关页面按周或月查看能耗、设置电价，并估算交流和直流充电费用。手机与 HA 记录可合并，支持按时间段或全部导出 CSV。[能耗统计](docs/screenshots/statistics.png) · [记录与数据源](docs/screenshots/data-sources.png)
-- 通过 **Android 桌面卡片**查看车况并快捷控车。App 内可更换主题和图标。[卡片预览](docs/screenshots/widgets.png)
+- **行程与充电**支持左右滑动切换，按周、月、年或全部查看。年视图和全部视图可按月展开，充电记录逐次列出。车辆上报温度时，充电页会显示当前电池最低温，历史详情显示本次充电期间记录到的最低温。每笔充电都可填写实付电费，也可恢复自动估算。[行程记录](docs/screenshots/trips.png) · [充电记录](docs/screenshots/charges.png)
+- **能耗统计**可查看本周、本月行驶里程，以及累计天数、里程和能耗。可按需添加、移除或拖动卡片。手机与 HA 记录支持合并和导出 CSV。[能耗统计](docs/screenshots/statistics.png) · [记录与数据源](docs/screenshots/data-sources.png)
+- **自定义车衣**可调整车顶与车身图案，并按车辆保存多套预设，之后可以直接切换。
+- **桌面小组件**在 Android、iOS 和鸿蒙提供小、中、大三种布局。中、大卡片右上角使用 LeapMore 的 L+ 标识。在「我的 → 桌面卡片预览」可查看各尺寸。[小组件预览](docs/screenshots/widgets.png)
 
 ## 开始使用
 
 1. 打开 App 后使用你自己的零跑账号登录并选车。首次选车时，可以选择车型的电池容量预设，或在「我的 → 车辆管理」中稍后填写。也可以先使用演示账号体验界面。
-2. 在「记录 → 记录设置」选择数据源。默认是 **手机记录 + HA 同步**。手机记录由 App 查询零跑云的车辆上报，可在 Android 的后台常驻设置中开启后台轮询。配置同一辆车的 HA 后，手机和 HA 的重叠记录会去重。
+2. 在「记录 → 记录设置」选择数据源。默认是 **手机记录 + HA 同步**。Android 用户可开启后台轮询。若系统提供「锁定」或「保持打开」，可在最近任务中锁住 LeapMore，减少清理后台导致的漏记。配置同一辆车的 HA 后，手机和 HA 的重叠记录会去重。
 3. 如需连接 HA，在记录设置中进入「HA 同步设置」，填写自己的服务器地址并授权。只想查看 HA 历史时，也可直接从登录页连接。[LeapToHA 集成](https://github.com/MiRaToo/ha-leapmotor-cn)提供所需的车辆记录。
-4. 如需在地图和行程中显示地址，在「我的 → 高德地图 Key」填入你自己的高德 Web 服务 Key。
+4. 如需显示停车和行程起终点地址、搜索常用地点或把手填地址发给车机导航，可在「我的 → 高德地图 Key」按指引注册高德开发者，创建「Web 服务」类型的 Key 并保存。
 
 手机采样可能受到车辆上报、网络和后台限制影响。耗电量与电费包含按 SOC、容量及电价计算的估算，实际金额以充电账单为准。
 

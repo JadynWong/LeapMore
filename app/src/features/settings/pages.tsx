@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { AboutSheet } from './AppUpdates';
+import { RewardSheet } from './RewardSheet';
 import { App } from '@capacitor/app';
 import { Capacitor } from '@capacitor/core';
 import { Directory, Filesystem } from '@capacitor/filesystem';
@@ -68,7 +69,7 @@ export function Mine() {
   const m = useModelContext();
   const navigate = useNavigate();
   const { key } = useAmapKey();
-  const [sheet, setSheet] = useState<'logout' | 'about' | 'privacy' | 'cache' | 'amap' | null>(null);
+  const [sheet, setSheet] = useState<'logout' | 'about' | 'reward' | 'privacy' | 'cache' | 'amap' | null>(null);
   const [note, setNote] = useState('');
   const qc = useQueryClient();
   const close = () => { setSheet(null); setNote(''); };
@@ -92,7 +93,8 @@ export function Mine() {
       <Row list icon="file" title="缓存管理" onClick={() => setSheet('cache')} /></div>
     <div className="list-card"><Row list icon="shield" title="隐私与免责声明" onClick={() => setSheet('privacy')} />
       <Row list icon="file" title="故障诊断与导出" to="/states" />
-      <Row list icon="star" title="关于 LeapMore" onClick={() => setSheet('about')} /></div>
+      <Row list icon="star" title="关于 LeapMore" onClick={() => setSheet('about')} />
+      <Row list icon="heart" title="赞赏作者" onClick={() => setSheet('reward')} /></div>
     <button className="btn logout" onClick={() => setSheet('logout')}>退出登录</button>
     <p className="tiny muted settings-footer">LeapMore 是免费提供的非官方项目</p>
     {sheet === 'amap' && <AmapKeySheet close={close} />}
@@ -101,6 +103,7 @@ export function Mine() {
     {sheet === 'privacy' && <Sheet title="隐私与免责声明" close={close}><p className="confirm-desc">{disclaimer}</p><p className="confirm-desc">系统版本将授权凭据保存在平台安全存储。脱敏 CSV 只包含日期与记录摘要。</p><button className="btn ghost" onClick={close}>关闭</button></Sheet>}
     {sheet === 'cache' && <Sheet title="缓存管理" close={close}><p className="confirm-desc">清理车模下载和地址查询缓存。</p><SheetButtons cancel={close} label="清理缓存" action={() => void clearCache()} />{note && <p role="status">{note}</p>}</Sheet>}
     {sheet === 'about' && <AboutSheet close={close} />}
+    {sheet === 'reward' && <RewardSheet close={close} />}
   </div></>;
 }
 
@@ -122,8 +125,9 @@ function CloudOperationPin({ scope }: { scope: string }) {
   const [busy, setBusy] = useState(false);
   const [note, setNote] = useState('');
   const options = [
-    ['reuse', '直接确认', '首次验证后加密保存密码，之后直接确认发送。'],
+    ['reuse', '直接确认', '首次验证后保存密码，之后每次点「确认发送」即可。'],
     ['verify', '每次验证', biometric.data ? '可用操作密码或系统指纹、面容验证。' : '使用零跑操作密码验证。'],
+    ['instant', '发送前不确认', '保存密码后，点控车按钮即发送指令，容易误触。'],
   ] as const;
   async function update(mode?: OperationMode) {
     setBusy(true);
@@ -132,7 +136,7 @@ function CloudOperationPin({ scope }: { scope: string }) {
       const prefs = mode ? await setOperationAuth(scope, mode) : await forgetOperationPin(scope);
       qc.setQueryData(operationAuthKey(scope), prefs);
       if (!mode) setNote('已移除本机保存的操作密码。');
-      else if (mode === 'reuse' && !prefs.saved) setNote('下次验证通过后加密保存操作密码。');
+      else if (mode !== 'verify' && !prefs.saved) setNote('下次验证通过后加密保存操作密码。');
     } catch {
       void qc.invalidateQueries({ queryKey: operationAuthKey(scope) });
       setNote('无法更新本机控车设置，请重试。');
@@ -142,7 +146,8 @@ function CloudOperationPin({ scope }: { scope: string }) {
     <Section title="发送前验证">
       {options.map(([mode, title, detail]) => <button type="button" className={'source-opt' + (auth.data?.mode === mode ? ' on' : '')} key={mode}
         aria-pressed={auth.data?.mode === mode} disabled={busy || auth.isLoading}
-        onClick={() => void update(mode)}><span className="radio" /><span className="so-body"><b>{title}</b><small>{detail}</small></span></button>)}
+        onClick={() => void update(mode)}><span className="radio" /><span className="so-body"><b>{title}</b>
+          <small className={mode === 'instant' ? 'operation-warning' : undefined}>{detail}</small></span></button>)}
       {(auth.data?.saved || auth.data?.biometric) && <button className="btn ghost sm" disabled={busy} onClick={() => void update()}>移除本机密码</button>}
       {note && <p role="status" className="tiny muted">{note}</p>}
     </Section>
@@ -225,6 +230,10 @@ export function BackgroundGuide() {
     <Hint>手机记录通过零跑云查询车辆车况。轨迹使用车辆上报的位置，需要车辆定位授权。</Hint>
     {supported && <>
       <Section className="background-check" title="后台检查">
+        <div className="background-lock-note"><Icon name="lock" size={18} />
+          <div><strong>在最近任务中锁住 LeapMore</strong>
+            <p>打开手机的最近任务，长按 LeapMore 卡片或点卡片菜单。若有「锁定」或「保持打开」，请选中它，减少一键清理打断后台记录的情况。</p></div>
+        </div>
         <Row icon="refresh" title="后台轮询服务" right={<CheckPill positive={running} labels={['运行中', '未运行']} />}
           sub={m.background.lastPollAt ? '最近后台查询成功 ' + stamp(m.background.lastPollAt) : undefined} />
         <Row icon="bell" title="记录通知" onClick={() => void open('notifications')}
@@ -268,13 +277,22 @@ export function States() {
   useEffect(() => { if (Capacitor.isNativePlatform()) void App.getInfo().then(info => setPlatform(Capacitor.getPlatform() + ' · ' + info.version)).catch(() => {}); }, []);
   return <><AppBar title="故障诊断" back={!m.mode || m.expired ? "/login" : !m.vehicle ? "/vehicles" : "/mine"} sub={platform} /><div className="page no-nav settings-page">
     <Diagnostics key={JSON.stringify([m.profileScope, m.cloudKey])} />
-    <Section title="数据过期"><Hint kind="warn" icon="clock">超过更新周期时显示上次采集时间。</Hint></Section>
-    <Section title="网络与同步"><Hint kind={m.ha.error ? 'err' : ''} icon="wifioff">{m.ha.error || '网络断开后保留已有缓存。恢复连接后可继续同步。'}</Hint>
-      <button className="btn secondary sm" disabled={m.refreshing} onClick={() => void m.refresh(true)}>刷新车况</button></Section>
-    <Section title="会话失效"><p className="tiny muted">自动续期失败时，需要重新授权。</p><Link className="btn sm accent" to={m.ha.expired || m.mode === 'ha' ? '/ha' : '/login'}>重新登录</Link></Section>
-    <Section title="能力不足"><p className="small">缺失字段显示「—」。共享权限、当前状态和车型能力决定可用功能。</p><Link className="link" to="/vehicle-access">查看车辆授权</Link></Section>
-    <Section title="结果待核对"><p><span className="pill pending">未确认</span> 车端回执缺失时，请查询车况。</p></Section>
-    {m.demo && <Section title="演示情景"><label className="mapping-row"><span>数据状态</span>
+    <div className="card diagnostic-folds">
+      <details className="diagnostic-fold" open={m.ha.error || m.expired || m.ha.expired ? true : undefined}>
+        <summary>常见问题与处理<Icon name="chevrond" size={16} /></summary>
+        <div className="diagnostic-fold-body diagnostic-help">
+          <div><strong>车况未更新</strong><p>{m.ha.error || '断网时保留上次车况。可查看采集时间，恢复连接后刷新。'}</p>
+            <button className="link" disabled={m.refreshing} onClick={() => void m.refresh(true)}>刷新车况</button></div>
+          <div><strong>会话失效</strong><p>自动续期失败时，需要重新授权。</p>
+            <Link className="link" to={m.ha.expired || m.mode === 'ha' ? '/ha' : '/login'}>重新登录</Link></div>
+          <div><strong>功能或数据缺失</strong><p>共享权限、车辆状态和车型能力会影响可用功能。缺失字段显示「—」。</p>
+            <Link className="link" to="/vehicle-access">查看车辆授权</Link></div>
+          <div><strong>操作结果待确认</strong><p>车端尚未返回回执，可刷新车况核对结果。</p></div>
+        </div>
+      </details>
+      {m.demo && <details className="diagnostic-fold diagnostic-demo">
+        <summary>演示情景<Icon name="chevrond" size={16} /></summary>
+        <div className="diagnostic-fold-body"><label className="mapping-row"><span>数据状态</span>
       <select aria-label="数据状态" value={m.debug.scenario} onChange={e => { const scenario = e.target.value as typeof m.debug.scenario; m.setDebug(s => ({ ...s, scenario })); }}>
         <option value="normal">正常</option><option value="stale">过期</option><option value="offline">断网</option><option value="pending">待确认</option></select></label>
       <label className="mapping-row"><span>账号</span><select aria-label="账号情景" value={m.debug.account} onChange={e => { const account = e.target.value as typeof m.debug.account; m.setDebug(s => ({ ...s, account })); }}>
@@ -288,6 +306,8 @@ export function States() {
         {([['control', '车辆控制'], ['location', '车辆定位'], ['mileage', '里程能耗']] as const).map(([key, label]) => <label key={key}>
           <input type="checkbox" checked={m.debug.grants[key]} onChange={e => m.setDebug(state => ({ ...state, grants: { ...state.grants, [key]: e.target.checked } }))} />{label}
         </label>)}</fieldset>
-    </Section>}
+        </div>
+      </details>}
+    </div>
   </div></>;
 }

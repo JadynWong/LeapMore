@@ -1,10 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
-<vector xmlns:android="http://schemas.android.com/apk/res/android"
-    android:width="48dp" android:height="48dp" android:viewportWidth="128" android:viewportHeight="128">
-    <path android:pathData="M29,0 H99 Q128,0 128,29 V99 Q128,128 99,128 H29 Q0,128 0,99 V29 Q0,0 29,0 Z"
-        android:fillColor="#FFFFFF" />
-    <path android:pathData="M49,35 L36,82 Q32,94 45,94 H91" android:strokeColor="#142C3A"
-        android:strokeWidth="11" android:strokeLineCap="round" android:strokeLineJoin="round" />
-    <path android:pathData="M83,37 v28 M69,51 h28" android:strokeColor="#08796B"
-        android:strokeWidth="11" android:strokeLineCap="round" />
-</vector>
+<layer-list xmlns:android="http://schemas.android.com/apk/res/android">
+    <item android:drawable="@drawable/leap_launcher_simple_icon" />
+</layer-list>

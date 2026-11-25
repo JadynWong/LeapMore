@@ -26,12 +26,12 @@ export function useExpenseCharges(m: ReturnType<typeof useModelContext>, days: n
     enabled: useHA && days === 90, retry: false, staleTime: 120_000,
   });
   const charges = useMemo(() => {
-    if (!m.usesHA || !m.canSee('mileage')) return m.records.charges;
+    if (!m.usesHA || m.simulated && m.usesPhone || !m.canSee('mileage')) return m.records.charges;
     const latest = recent.data ?? m.ha.records.charges;
     const rows = days !== 90 || !older.data ? latest :
       [...new Map([...older.data.charges, ...latest].map(charge => [charge.id, charge])).values()];
     return m.source === 'hybrid' ? combineCharges(m.cloudRecords.charges, rows).charges : rows;
-  }, [days, m.usesHA, m.grants.mileage, m.expired, m.vehicle, m.source, m.records.charges, m.ha.records.charges, m.cloudRecords.charges, recent.data, older.data]);
+  }, [days, m.usesHA, m.usesPhone, m.simulated, m.grants.mileage, m.expired, m.vehicle, m.source, m.records.charges, m.ha.records.charges, m.cloudRecords.charges, recent.data, older.data]);
   const partial = m.usesHA && useHA && (recent.isError ||
     (days === 90 && !older.isFetching && (older.isError || older.data?.coverage !== 'complete')));
   return { charges, partial, loading: useHA && (recent.isFetching || days === 90 && older.isFetching) };
@@ -64,10 +64,10 @@ export function ExpenseCard({ active }: { active: boolean }) {
     const samples = Array.from({ length: days }, () => {
       const day = localDay(date.getTime());
       date.setDate(date.getDate() + 1);
-      return { day, ...chargeCostTotals(byDay.get(day) ?? [], m.tariff) };
+      return { day, ...chargeCostTotals(byDay.get(day) ?? [], m.tariff, m.chargeFees.get) };
     });
-    return { totals: chargeCostTotals(rows, m.tariff), samples, recordCount: rows.length };
-  }, [charges, days, m.tariff, start]);
+    return { totals: chargeCostTotals(rows, m.tariff, m.chargeFees.get), samples, recordCount: rows.length };
+  }, [charges, days, m.tariff, m.chargeFees.get, start]);
   const reveal = useChartReveal(active, totals.count > 0);
   const left = 14, right = 306, top = 12, bottom = 75;
   const { bindings, guide, index, spacing, x } = useDailyPlot(samples, 320, left, right, active);
@@ -75,13 +75,13 @@ export function ExpenseCard({ active }: { active: boolean }) {
   const maximum = Math.max(1, ...samples.map(day => day.total ?? 0));
   const barWidth = Math.max(1, Math.min(18, spacing * .6));
   return <section className="card chart-card expense-card" id="expense-statistics" tabIndex={-1}>
-    <div className="chart-head"><h3><Icon name="bolt" size={15} />充电费用估算</h3>
+    <div className="chart-head"><h3><Icon name="bolt" size={15} />{totals.manualCount ? '充电费用' : '充电费用估算'}</h3>
       <Seg options={[[7, '7 天'], [30, '30 天'], [90, '90 天']]} current={days} choose={setDays} label="费用统计范围" />
     </div>
     <ExpenseTotals totals={totals} />
     <div {...bindings} className={'energy-plot expense-day-plot' + (guide ? ' show-guide' : '')} role="group" tabIndex={0}
       aria-label="费用统计，左右拖动或按方向键查看日期">
-      <svg className="chart-svg expense-plot" viewBox="0 0 320 98" role="img" aria-label={`近 ${days} 天预估电费柱状图`}>
+      <svg className="chart-svg expense-plot" viewBox="0 0 320 98" role="img" aria-label={`近 ${days} 天${totals.manualCount ? '' : '预估'}电费柱状图`}>
         {[top, 43, bottom].map(y => <line key={y} x1={left} x2={right} y1={y} y2={y} stroke="var(--line-strong)" />)}
         {totals.count > 0 && <g className="plot-series" {...reveal}>{samples.map(({ day, total }, i) => {
           if (total === null) return null;
@@ -99,7 +99,7 @@ export function ExpenseCard({ active }: { active: boolean }) {
       <b className="num">{selected.day.slice(5).replace('-', '月')}日 · {costText(selected.total)}</b>
       <span className="tiny muted">交流 {costText(selected.ac)} · 直流 {costText(selected.dc)}</span>
     </div>}
-    {(partial || totals.count < recordCount) && <p className="tiny muted">{partial ? '部分 HA 历史暂不可用，金额仅含已读取且可估算的记录。' : '金额仅含电量、类型和起止时间齐全的记录。'}</p>}
+    {(partial || totals.count < recordCount) && <p className="tiny muted">{partial ? '部分 HA 历史暂不可用。' : ''}合计仅含有实付或估算金额的记录。</p>}
     {loading && !totals.count && <p className="tiny muted">正在读取充电记录…</p>}
     {!loading && !totals.count && <p className="tiny muted">该时段暂无可估算的充电记录。</p>}
   </section>;

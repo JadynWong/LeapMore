@@ -23,7 +23,7 @@ export default defineConfig(({ mode }) => {
           const from = resolve(import.meta.dirname, 'public', folder);
           if (!existsSync(from)) continue;
           cpSync(from, resolve(import.meta.dirname, 'dist', folder), { recursive: true, dereference: true,
-            filter: source => !/[/\\](\.DS_Store|wechat-reward-qr\.png|skybox_night_starry\.jpg)$/.test(source) &&
+            filter: source => !/[/\\](\.DS_Store|skybox_night_starry\.jpg)$/.test(source) &&
               (env.LEAPMORE_LOCAL_CAR_ASSETS === '1' || !/[/\\](b10|c10|hero-day|hero-night)\.png$/.test(source)),
           });
         }

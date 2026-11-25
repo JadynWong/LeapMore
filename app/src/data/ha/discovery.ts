@@ -14,9 +14,10 @@ export interface RegisteredVehicle { device_id: string; vin: string; name?: stri
 export interface DiscoveredVehicle { deviceId: string; vin: string; name?: string; mapping: Mapping }
 
 const roles = {
-  battery: { domain: 'sensor', fields: { soc: null } },
+  battery: { domain: 'sensor', fields: { soc: null, batteryMinTemp: 'battery_min_temp' } },
   range: { domain: 'sensor', fields: { range: null } },
   total_mileage: { domain: 'sensor', fields: { odometer: null } },
+  delivery_days: { domain: 'sensor', fields: { deliveryDays: null } },
   vehicle_state: { domain: 'sensor', fields: { motion: null, speed: 'speed', windows: 'windows_open' } },
   charging_state: { domain: 'sensor', fields: { charge: null } },
   tracker: { domain: 'device_tracker', fields: { tracker: null } },
@@ -92,7 +93,7 @@ export function vehicleByVin(vehicles: DiscoveredVehicle[], vin: string) {
 }
 
 const locationFields = new Set<Field>(['tracker', 'latitude', 'longitude']);
-const mileageFields = new Set<Field>(['odometer', 'speed', 'motion', 'charged', 'used', 'chargeType', 'energyRank', 'rankEfficiency']);
+const mileageFields = new Set<Field>(['odometer', 'deliveryDays', 'speed', 'motion', 'charged', 'used', 'chargeType', 'energyRank', 'rankEfficiency']);
 export function permittedFields(location: boolean, mileage: boolean) {
   return (Object.keys(fields) as Field[]).filter(field =>
     (!locationFields.has(field) || location) && (!mileageFields.has(field) || mileage));

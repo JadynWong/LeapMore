@@ -8,8 +8,8 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.SharedPreferences;
+import android.content.res.Configuration;
 import android.graphics.Bitmap;
-import android.graphics.BitmapFactory;
 import android.graphics.Canvas;
 import android.graphics.Paint;
 import android.net.Uri;
@@ -21,8 +21,6 @@ import android.util.TypedValue;
 import android.util.Log;
 import android.view.View;
 import android.widget.RemoteViews;
-import java.io.IOException;
-import java.io.InputStream;
 import org.json.JSONObject;
 
 public abstract class LeapWidget extends AppWidgetProvider {
@@ -45,14 +43,14 @@ public abstract class LeapWidget extends AppWidgetProvider {
     static void publishPickerPreviews(Context context) {
         if (Build.VERSION.SDK_INT < 35) return;
         SharedPreferences storage = LeapWidgetPlugin.storage(context);
-        int previewVersion = 2;
+        int previewVersion = 4;
         if (storage.getInt("previewVersion", 0) == previewVersion) return;
         AppWidgetManager manager = AppWidgetManager.getInstance(context);
         int category = AppWidgetProviderInfo.WIDGET_CATEGORY_HOME_SCREEN;
         try {
             JSONObject example = new JSONObject("""
                 {"range":"195 km","soc":"42%","state":"已驻车","charging":"未插枪",
-                "chargeStatus":"unplugged","locked":"已锁","inside":"24.0℃","odometer":"4200 km","modelImage":"c10",
+                "chargeStatus":"unplugged","locked":"已锁","inside":"24.0℃","odometer":"4200 km",
                 "simulated":true,"canLock":true,"canControl":true}
                 """);
             Card card = new Card(context, example, true);
@@ -91,11 +89,12 @@ public abstract class LeapWidget extends AppWidgetProvider {
             this.context = context;
             this.snapshot = snapshot;
             this.preview = preview;
-            dark = "dark".equals(snapshot.optString("colorScheme"));
-            ink = dark ? 0xffedf4f5 : 0xff17313b;
-            muted = dark ? 0xffa7bbc0 : 0xff49616a;
-            accent = dark ? 0xff90dcc9 : 0xff176556;
-            tile = dark ? 0xff27383f : 0xffe5edf1;
+            boolean systemDark = (context.getResources().getConfiguration().uiMode & Configuration.UI_MODE_NIGHT_MASK) == Configuration.UI_MODE_NIGHT_YES;
+            dark = "dark".equals(snapshot.optString("colorScheme", systemDark ? "dark" : "light"));
+            ink = context.getColor(dark ? R.color.widget_ink_dark : R.color.widget_ink_light);
+            muted = context.getColor(dark ? R.color.widget_muted_dark : R.color.widget_muted_light);
+            accent = context.getColor(dark ? R.color.widget_accent_dark : R.color.widget_accent_light);
+            tile = context.getColor(dark ? R.color.widget_tile_dark : R.color.widget_tile_light);
         }
 
         RemoteViews render(int size, boolean stale) {
@@ -115,14 +114,13 @@ public abstract class LeapWidget extends AppWidgetProvider {
             visible(view, R.id.widget_status, !small || stale);
             text(view, R.id.widget_range, withSmallUnit(snapshot.optString("range", "— km"), " km"), ink);
             view.setTextViewTextSize(R.id.widget_range, TypedValue.COMPLEX_UNIT_SP, rangeSize);
-            text(view, R.id.widget_range_label, snapshot.optString("rangeLabel", fuel.isEmpty() ? "续航" : "综合续航"), muted);
+            text(view, R.id.widget_range_label, snapshot.optString("rangeLabel", "续航"), muted);
             text(view, R.id.widget_soc, withSmallUnit(soc, "%"), ink);
             view.setTextViewTextSize(R.id.widget_soc, TypedValue.COMPLEX_UNIT_SP, rangeSize);
             text(view, R.id.widget_soc_label, "电量", muted);
             visible(view, R.id.widget_soc_group, !large);
-            visible(view, R.id.widget_car_status, size == 4);
-            visible(view, R.id.widget_car_large, large);
-            if (!small) carImage(view, large ? R.id.widget_car_large : R.id.widget_car_medium);
+            visible(view, R.id.widget_brand_status, size == 4);
+            visible(view, R.id.widget_brand_large, large);
 
             view.removeAllViews(R.id.widget_charge_side);
             view.removeAllViews(R.id.widget_charge_main);
@@ -134,7 +132,7 @@ public abstract class LeapWidget extends AppWidgetProvider {
             if (large) {
                 view.addView(R.id.widget_levels, level("电量", soc, R.drawable.leap_widget_icon_battery, accent));
                 if (!fuel.isEmpty()) {
-                    view.addView(R.id.widget_levels, level("油量", fuel, R.drawable.leap_widget_icon_fuel, dark ? 0xffe2ac65 : 0xffa46a1b));
+                    view.addView(R.id.widget_levels, level("油量", fuel, R.drawable.leap_widget_icon_fuel, context.getColor(dark ? R.color.widget_fuel_dark : R.color.widget_fuel_light)));
                 }
                 String locked = snapshot.optString("locked");
                 view.addView(R.id.widget_metrics, metric("车门", locked.equals("已锁") || locked.equals("未锁") ? locked : "—"));
@@ -150,8 +148,10 @@ public abstract class LeapWidget extends AppWidgetProvider {
             view.addView(R.id.widget_actions, action("空调", "climate", R.drawable.leap_widget_icon_fan, canControl, snapshot.optBoolean("climateOn")));
             if (!small) {
                 view.addView(R.id.widget_actions, action("后备箱", "trunk",
-                    trunkOpen ? R.drawable.leap_widget_icon_tailgate_open : R.drawable.leap_widget_icon_tailgate, canControl, trunkOpen));
-                view.addView(R.id.widget_actions, action("寻车", "find", R.drawable.leap_widget_icon_find, canControl, false));
+                    trunkOpen ? R.drawable.leap_widget_icon_tailgate_open : R.drawable.leap_widget_icon_tailgate,
+                    !stale && snapshot.optBoolean("canTrunk", canControl), trunkOpen));
+                view.addView(R.id.widget_actions, action("寻车", "find", R.drawable.leap_widget_icon_find,
+                    !stale && snapshot.optBoolean("canFind", canControl), false));
             }
             return view;
         }
@@ -214,23 +214,6 @@ public abstract class LeapWidget extends AppWidgetProvider {
             String vehicle = snapshot.optString("vehicle");
             if (enabled && !preview && !vehicle.isEmpty()) view.setOnClickPendingIntent(R.id.widget_action, control(context, key, vehicle));
             return view;
-        }
-
-        private void carImage(RemoteViews view, int id) {
-            String model = snapshot.optString("modelImage");
-            if (model.equals("c10") || model.equals("b10")) {
-                try (InputStream stream = context.getAssets().open("public/assets/" + model + ".png")) {
-                    BitmapFactory.Options options = new BitmapFactory.Options();
-                    options.inSampleSize = 2;
-                    Bitmap bitmap = BitmapFactory.decodeStream(stream, null, options);
-                    if (bitmap != null) {
-                        view.setImageViewBitmap(id, bitmap);
-                        view.setInt(id, "setColorFilter", 0x00000000);
-                        return;
-                    }
-                } catch (IOException ignored) { }
-            }
-            icon(view, id, R.drawable.leap_widget_icon_car, ink);
         }
 
         private RemoteViews layout(int id) { return new RemoteViews(context.getPackageName(), id); }

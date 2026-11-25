@@ -1,6 +1,6 @@
 import { biometricsAvailable, secureGet, secureGetWithBiometrics, secureRemove, secureSet } from './secure';
 
-export type OperationMode = 'reuse' | 'verify';
+export type OperationMode = 'reuse' | 'verify' | 'instant';
 export type OperationAuth = { mode: OperationMode; saved: boolean; biometric: boolean };
 type StoredOperationAuth = { mode: OperationMode | 'password' | 'biometrics'; saved: boolean; biometric?: boolean };
 export const defaultOperationAuth: OperationAuth = { mode: 'reuse', saved: false, biometric: false };
@@ -17,7 +17,8 @@ async function keys(scope: string) {
 export async function operationAuth(scope: string): Promise<OperationAuth> {
   const prefs = await secureGet<StoredOperationAuth>((await keys(scope)).prefs);
   if (!prefs) return defaultOperationAuth;
-  return { mode: prefs.mode === 'reuse' ? 'reuse' : 'verify', saved: prefs.mode === 'reuse' && prefs.saved,
+  const mode = prefs.mode === 'reuse' || prefs.mode === 'instant' ? prefs.mode : 'verify';
+  return { mode, saved: mode !== 'verify' && prefs.saved,
     biometric: prefs.biometric ?? (prefs.mode === 'biometrics' && prefs.saved) };
 }
 
@@ -30,8 +31,9 @@ export async function setOperationAuth(scope: string, mode: OperationMode): Prom
     const pin = await secureGet<string>(id.reuse).catch(() => null);
     if (pin && validOperationPin(pin)) biometric = await secureSet(id.biometrics, pin).then(() => true).catch(() => before.biometric);
   }
-  await secureRemove(id.reuse);
-  const current = { mode, saved: false, biometric };
+  const keepPin = mode !== 'verify' && before.mode !== 'verify';
+  if (!keepPin) await secureRemove(id.reuse);
+  const current = { mode, saved: keepPin && before.saved, biometric };
   await secureSet(id.prefs, current);
   return current;
 }
@@ -40,7 +42,7 @@ export async function rememberOperationPin(scope: string, mode: OperationMode, p
   const id = await keys(scope);
   const before = await operationAuth(scope);
   if (before.mode !== mode || !validOperationPin(pin)) return before;
-  const saved = mode === 'reuse';
+  const saved = mode !== 'verify';
   let biometric = before.biometric;
   if (saved) await secureSet(id.reuse, pin);
   if ((mode === 'verify' || biometric) && await biometricsAvailable()) {

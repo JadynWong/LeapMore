@@ -1,0 +1,10 @@
+{
+  "light": {
+    "surface": "#f4f9fb", "tile": "#e5edf1", "ink": "#17313b", "muted": "#49616a",
+    "accent": "#176556", "selected": "#d5ebe4", "fuel": "#a46a1b"
+  },
+  "dark": {
+    "surface": "#1b282d", "tile": "#27383f", "ink": "#edf4f5", "muted": "#a7bbc0",
+    "accent": "#90dcc9", "selected": "#294a43", "fuel": "#e2ac65"
+  }
+}

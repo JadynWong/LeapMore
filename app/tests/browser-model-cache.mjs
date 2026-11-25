@@ -15,8 +15,8 @@ try {
     const id = 'test-model-cache-' + crypto.randomUUID();
     const unpack = text => Uint8Array.from(atob(text), char => char.charCodeAt(0)).buffer;
     const client = { get3DPackages: async () => ({ h5: unpack(${JSON.stringify(pack({ 'index.js': h5 }))}),
-      src: unpack(${JSON.stringify(pack({ 'C01_2024/C01_2024_full_car.fbx': new Uint8Array([1]) }))}),
-      modelParam: { carType: 'C01', year: 2024 } }) };
+      src: unpack(${JSON.stringify(pack({ 'C01_2023改款/C01_2023改款_full_car.fbx': new Uint8Array([1]) }))}),
+      modelParam: { carType: 'C01', year: '2023改款' } }) };
     try {
       const fresh = await prepareCloud3D(client, id);
       const cache = await caches.open('cloud3d-v6-' + fresh.webId);
@@ -41,7 +41,7 @@ try {
       const repairedCache = await (await cache.match(url('index.c01-v1.js'))).text() === patched;
       // Exercise the shipped wrapper with the fast-worker ordering, independently of the FBX fixture.
       await cache.put(url('index.c01-v1.js'), new Response(
-        'window.newInit = () => { window.onFullCarLoaded(); setTimeout(window.onFirstFrame, 300); };',
+        'window.newInit = config => { if (JSON.parse(config).year !== "2023改款") throw Error("Year changed"); window.onFullCarLoaded(); setTimeout(window.onFirstFrame, 300); };',
         { headers: { 'Content-Type': 'text/javascript' } }));
       const frame = document.createElement('iframe');
       frame.sandbox = 'allow-scripts';
@@ -77,5 +77,16 @@ try {
   assert.ok(run.events.some(event => event.step === 'hit'));
   assert.equal(run.events.find(event => event.step === 'viewerBuild').facts.c01Compat, true);
   assert.deepEqual(run.signals, ['viewer-boot', 'full', 'first', 'ready']);
+  const years = await tab.run(`(async () => {
+    const values = [];
+    window.viewerAsset = () => 'data:text/javascript,export default {}';
+    window.newInit = config => { values.push(JSON.parse(config)); };
+    for (const params of ['car=C10&year=2024', 'car=B10&year=2101', 'car=C01']) {
+      window.viewerParams = params;
+      await import('/viewer/view.js?' + params);
+    }
+    return values.map(cfg => [cfg.carType, cfg.year ?? null]);
+  })()`);
+  assert.deepEqual(years, [['C10', 2024], ['B10', 2101], ['C01', null]]);
   console.log('C01 fresh install and offline upgrade of a legacy cache both select the corrected viewer.');
 } finally { await tab.close(); }

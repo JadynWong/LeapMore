@@ -1,6 +1,6 @@
 import { createContext, useContext, useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useMatch } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useModelContext } from '../context';
 import { Hint, Sheet, SheetButtons } from '../../ui/components';
@@ -36,6 +36,7 @@ function useCommandModel(onClose?: () => void) {
   const model = useModelContext();
   const qc = useQueryClient();
   const scope = model.operationScope;
+  const widgetLink = useMatch('/widget-action');
   const auth = useQuery({ queryKey: operationAuthKey(scope), enabled: !!scope, queryFn: () => operationAuth(scope), staleTime: Infinity });
   const biometrics = useQuery({ queryKey: biometricAvailabilityKey, enabled: !!scope, queryFn: biometricsAvailable, staleTime: 0 });
   const latest = useRef(model);
@@ -48,13 +49,14 @@ function useCommandModel(onClose?: () => void) {
   const [verifying, setVerifying] = useState(false);
   const [authNote, setAuthNote] = useState('');
   const { mode, saved: savedPin, biometric: savedBioPin } = auth.data ?? defaultOperationAuth;
-  const useSaved = mode === 'reuse' && savedPin && !manual;
+  const useSaved = mode !== 'verify' && savedPin && !manual;
   const useBiometrics = mode === 'verify' && savedBioPin && !!biometrics.data && !manual;
   const [checking, setChecking] = useState(false);
   const timers = useRef<ReturnType<typeof setTimeout>[]>([]);
   const operation = useRef<AbortController | null>(null);
   const vehicle = model.vehicle?.id;
   const session = useRef({ scope, vehicle, mode: model.mode });
+  const sameVehicle = () => latest.current.operationScope === scope && latest.current.vehicle?.id === vehicle && latest.current.mode === model.mode;
   const clear = () => {
     operation.current?.abort();
     operation.current = null;
@@ -81,8 +83,8 @@ function useCommandModel(onClose?: () => void) {
     if (!m.simulated && !m.client) return ['当前车况为只读接入', '/states', '查看状态'] as const;
     return null;
   }
-  function ask(next: Command) {
-    if (operation.current) return;
+  async function ask(next: Command) {
+    if (operation.current || !sameVehicle()) return;
     const blocked = reason(next.kind);
     if (blocked) { latest.current.setToast(blocked[0]); return; }
     if (!latest.current.simulated && !next.remote) return;
@@ -92,8 +94,24 @@ function useCommandModel(onClose?: () => void) {
     setAuthNote('');
     setMessage('');
     setChecking(false);
-    setCommand(next);
     setStep(null);
+    if (latest.current.simulated || !scope) { setCommand(next); return; }
+
+    const controller = new AbortController();
+    operation.current = controller;
+    // Another app window may have changed this vehicle's preference since it was opened.
+    const prefs = await qc.fetchQuery({ queryKey: operationAuthKey(scope), queryFn: () => operationAuth(scope),
+      staleTime: 0, retry: false, networkMode: 'always' }).catch(() => null);
+    if (controller.signal.aborted || !sameVehicle()) return;
+    setCommand(next);
+    // Public widget URLs open a review sheet. Opening a URL alone is not a control-button tap.
+    if (!widgetLink && prefs?.mode === 'instant' && prefs.saved) {
+      setStep('sending');
+      await authorizeSend(next, controller, 'saved', prefs.mode);
+    } else {
+      if (!prefs) setManual(true);
+      operation.current = null;
+    }
   }
   function close() { clear(); setPin(''); setStep(null); setCommand(null); setVerifying(false); onClose?.(); }
   const after = (delay: number, action: () => void) => timers.current.push(setTimeout(action, delay));
@@ -215,7 +233,7 @@ function useCommandModel(onClose?: () => void) {
       }
     }
   }
-  async function authorizeSend(next: Command, controller: AbortController, method: AuthMethod) {
+  async function authorizeSend(next: Command, controller: AbortController, method: AuthMethod, authMode: OperationMode) {
     const { signal } = controller;
     setAuthNote('');
     setVerifying(method !== 'password');
@@ -226,17 +244,20 @@ function useCommandModel(onClose?: () => void) {
       if (!signal.aborted && method !== 'biometrics') setAuthNote('无法读取本机密码，请重新输入。');
       password = null;
     }
-    if (signal.aborted) return;
+    if (signal.aborted || !sameVehicle()) return;
     setVerifying(false);
     if (!password || !validOperationPin(password)) {
       if (method === 'biometrics') setAuthNote('生物识别未通过，可使用操作密码。');
       else setManual(true);
+      setStep(null);
       operation.current = null;
       return;
     }
+    const blocked = reason(next.kind);
+    if (blocked) { setMessage(blocked[0]); setStep('failed'); return; }
     setStep('sending');
     setPin('');
-    await sendLive(next, password, method !== 'password', mode, signal);
+    await sendLive(next, password, method !== 'password', authMode, signal);
   }
   function send(method: AuthMethod = useSaved ? 'saved' : 'password') {
     if (!command || step || operation.current) return;
@@ -247,7 +268,7 @@ function useCommandModel(onClose?: () => void) {
     const controller = new AbortController();
     operation.current = controller;
     if (!simulation) {
-      void authorizeSend(command, controller, method);
+      void authorizeSend(command, controller, method, mode);
       return;
     }
     setStep('sending');
@@ -297,7 +318,7 @@ function useCommandModel(onClose?: () => void) {
     useSaved, useBiometrics, showPassword: () => { setManual(true); setAuthNote(''); }, authNote, verifying,
     loadingAuth: auth.isLoading || mode === 'verify' && savedBioPin && biometrics.isLoading,
     confirmDisabled: auth.isLoading || verifying || !useSaved && !validOperationPin(pin),
-    saveOnVerify: mode === 'reuse' && !savedPin || mode === 'verify' && !!biometrics.data && !savedBioPin };
+    saveOnVerify: mode !== 'verify' && !savedPin || mode === 'verify' && !!biometrics.data && !savedBioPin };
 }
 
 const Context = createContext<ReturnType<typeof useCommandModel> | null>(null);

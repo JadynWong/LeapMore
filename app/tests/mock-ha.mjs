@@ -19,7 +19,7 @@ const entry = (id, state, min = 0, extra = {}) => ({
   attributes: { friendly_name: id.split('.').at(-1), ...extra },
 });
 const groups = [
-  [entry('sensor.car_soc', 37, 30), entry('sensor.car_soc', 64, 3)],
+  [entry('sensor.car_soc', 37, 30, { battery_min_temp: 12.5 }), entry('sensor.car_soc', 64, 3, { battery_min_temp: 19 })],
   [entry('sensor.car_range', 288, 2)],
   [entry('sensor.fixture_energy_rank', '8%', 2)],
   [entry('sensor.fixture_rank_efficiency', 18.5, 2)],

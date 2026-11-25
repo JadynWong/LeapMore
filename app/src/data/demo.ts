@@ -28,7 +28,8 @@ const at = (days: number, hour: number, min: number) => {
 };
 
 export function demoRecords() {
-  const trips: Trip[] = [[0, 18, 32, 12.6, 34], [0, 8, 12, 18.3, 42], [1, 20, 14, 23.4, 55]].map(([days, hour, min, distanceKm, durationMin], i) => {
+  const trips: Trip[] = [[0, 18, 32, 12.6, 34], [0, 8, 12, 18.3, 42], [1, 20, 14, 23.4, 55],
+    [9, 8, 40, 16.7, 28], [42, 12, 15, 62.6, 78], [370, 14, 10, 38.1, 51]].map(([days, hour, min, distanceKm, durationMin], i) => {
     const startedAt = at(days, hour, min);
     const route = Array.from({ length: 20 }, (_, p) => ({ ...demoLocation, at: startedAt + p * 6000,
       lat: demoLocation.lat - (20 - p) * .0006, lon: demoLocation.lon - (20 - p) * .001 + Math.sin(p / 2) * .002 }));
@@ -38,10 +39,11 @@ export function demoRecords() {
       speeds: Array.from({ length: 80 }, (_, p) => ({ at: startedAt + p * 6000, value: Math.abs(Math.sin(p * .14) * 47) + (p * 13 % 14) })),
     };
   });
-  const charges: Charge[] = [[0, 19, 24, 34.8, 55], [2, 1, 5, 21.4, 240]].map(([days, hour, min, kwh, duration], i) => {
+  const charges: Charge[] = [[0, 19, 24, 34.8, 55], [2, 1, 5, 21.4, 240],
+    [12, 22, 15, 23.2, 255], [54, 21, 6, 19.7, 201], [372, 23, 17, 26.1, 262]].map(([days, hour, min, kwh, duration], i) => {
     const startedAt = at(days, hour, min);
     return { id: 'demo-charge-' + i, startedAt, endedAt: startedAt + duration * 60_000, source: 'phone', type: i ? 'ac' : 'dc',
-      kwh, gridKwh: null, socStart: 32, socEnd: 85, cost: null, partial: false,
+      kwh, gridKwh: null, socStart: 32, socEnd: 85, cost: null, partial: false, minRecordedBatteryTempC: i ? 17 : 21,
       powers: Array.from({ length: 20 }, (_, p) => ({ at: startedAt + p * duration * 3000, value: i ? 6.3 - p * .06 : 55 - p * 1.4 })),
     };
   });

@@ -1,6 +1,7 @@
 // 包装页只调用查看器能力，模型与查看器文件保持原样。版本与 car3d.py 同步。
-const WRAPPER_VERSION = 29;
+const WRAPPER_VERSION = 32;
 const q = new URLSearchParams(window.viewerParams||location.search);
+const year = q.get("year");
 let homeView = q.has('home');
 let appearanceView = q.has('appearance');
 const shared = q.has('shared');
@@ -8,7 +9,7 @@ let desiredSurface = 'home', configuredSurface, surfaceFrame = 0;
 const appViewer = q.has('app');
 if(appViewer)document.documentElement.classList.add('app-viewer');
 const cfg = {
-  carType:q.get("car")||"C10", year:Number(q.get("year")||2026),
+  carType:q.get("car")||"C10", year:year ? (/^\d{4}$/.test(year) ? Number(year) : year) : undefined,
   carTypeCode:q.get("trim")||"", colorCode:Number(q.get("color")||0),
   rudder:0, offset:Number(q.get("offset")||.37), radius:Number(q.get("radius")||15),
   seat:Number(q.get("seat")||5), roofColorCode:Number(q.get("roof")||0),
@@ -203,6 +204,57 @@ function wrapFrame(side,box){
   return side==='top'?{u:left.clone().negate(),v:front,n:up}:side==='front'?{u:left.clone(),v:up,n:front}:side==='rear'?{u:left.clone().negate(),v:up,n:front.clone().negate()}:side==='right'?{u:front.clone().negate(),v:up,n:left.clone().negate()}:{u:front,v:up,n:left};
 }
 function wrapUniforms(side){return `haWrap${side[0].toUpperCase()+side.slice(1)}`}
+// 全景天幕与风挡可能共享材质，每次绘制时按玻璃网格选择是否显示车衣。
+const roofGlassMaterials=new Map();
+function restoreRoofGlass(){
+  for(const [material,{vertex,fragment,before}] of roofGlassMaterials){
+    material.vertexShader=vertex;material.fragmentShader=fragment;material.onBeforeRender=before;
+    for(const key of Object.keys(material.uniforms))if(key==='haWrapTexture'||key.startsWith('haWrapTop'))delete material.uniforms[key];
+    material.needsUpdate=true;
+  }
+  roofGlassMaterials.clear();
+}
+function roofGlassLayer(node,box){
+  const original=node.material,geometry=node.geometry;
+  const installed=roofGlassMaterials.get(original);
+  if(installed?.nodes.has(node))return original;
+  if(!geometry||!original?.transparent||!original.vertexShader||!original.fragmentShader?.includes('gl_FragColor')||
+      !/glass|panoram|sunroof|skylight|天窗/i.test(node.name+' '+original.name))return;
+  if(!geometry.boundingBox)geometry.computeBoundingBox();
+  const pane=geometry.boundingBox.clone().applyMatrix4(node.matrixWorld);
+  const body=box.getSize(box.min.clone()),size=pane.getSize(box.min.clone());
+  if(pane.min.y<box.max.y-.19*body.y||size.y>.19*body.y||size.x<body.x*.18||size.z<body.z*.18)return;
+  if(installed){installed.nodes.add(node);return original;}
+  const main=/void\s+main\s*\(\s*(?:void\s*)?\)\s*\{/;
+  const end=original.fragmentShader.lastIndexOf('}');
+  if(!main.test(original.vertexShader)||end<0)return;
+  const nodes=new Set([node]),before=original.onBeforeRender;
+  roofGlassMaterials.set(original,{nodes,before,vertex:original.vertexShader,fragment:original.fragmentShader});
+  original.uniforms.haWrapTopEnabled={value:0};
+  original.onBeforeRender=function(renderer,scene,camera,geometry,object,group){
+    before?.call(this,renderer,scene,camera,geometry,object,group);
+    this.uniforms.haWrapTopEnabled.value=nodes.has(object)?1:0;
+    this.uniformsNeedUpdate=true;
+  };
+  original.vertexShader='varying highp vec3 wrapRoofPosition;\n'+original.vertexShader.replace(main,match=>match+'\nwrapRoofPosition=(modelMatrix*vec4(position,1.0)).xyz;');
+  original.fragmentShader=`varying highp vec3 wrapRoofPosition;
+uniform highp sampler2D haWrapTexture;
+uniform highp vec3 haWrapTopCenter,haWrapTopU,haWrapTopV;
+uniform highp vec2 haWrapTopSize,haWrapTopRotation;
+uniform highp vec4 haWrapTopRect;
+uniform highp float haWrapTopOpacity,haWrapTopEnabled;
+`+original.fragmentShader.slice(0,end)+`
+vec3 wrapDelta=wrapRoofPosition-haWrapTopCenter;
+vec2 wrapUV=vec2(dot(wrapDelta,haWrapTopU),dot(wrapDelta,haWrapTopV));
+wrapUV=mat2(haWrapTopRotation.x,-haWrapTopRotation.y,haWrapTopRotation.y,haWrapTopRotation.x)*wrapUV/haWrapTopSize+0.5;
+if(haWrapTopEnabled>0.5&&all(greaterThanEqual(wrapUV,vec2(0.0)))&&all(lessThanEqual(wrapUV,vec2(1.0)))){
+  vec4 decal=texture2D(haWrapTexture,haWrapTopRect.xy+wrapUV*haWrapTopRect.zw);
+  gl_FragColor=mix(gl_FragColor,vec4(decal.rgb,1.0),decal.a*haWrapTopOpacity);
+}
+`+original.fragmentShader.slice(end);
+  original.needsUpdate=true;
+  return original;
+}
 function updateWrap(){
   if(!wrapConfig)return false;const box=carBounds();if(!box)return false;
   const centerBase=box.min.clone().add(box.max).multiplyScalar(.5),corners=[];
@@ -210,11 +262,28 @@ function updateWrap(){
   const extent=axis=>{const values=corners.map(p=>p.dot(axis));return Math.max(...values)-Math.min(...values)};
   const values={};
   for(const side of wrapSides){const config=wrapConfig.faces[side],image=wrapImages.get(side),frame=config&&wrapFrame(side,box);if(!config||!image||!frame)continue;
-    const center=centerBase.clone(),span=extent(frame.u),height=extent(frame.v),width=span*config.scale/100;
+    const center=centerBase.clone(),span=extent(frame.u),height=extent(frame.v);
+    const angle=config.rotation*Math.PI/180,cos=Math.cos(angle),sin=Math.sin(angle);
+    let width=span*config.scale/100;
+    if(side==='top'&&config.pattern&&config.scale>100){
+      // 保留 100% 以内的贴图比例，最大档按旋转后的车宽、车长同时覆盖。
+      const across=span*Math.abs(cos)+height*Math.abs(sin),along=span*Math.abs(sin)+height*Math.abs(cos);
+      const fullWidth=Math.max(across,along*image.width/image.height);
+      width+=Math.max(0,fullWidth*1.01-span*1.8)*(config.scale-100)/80;
+    }
     center.addScaledVector(frame.u,(config.x/100-.5)*span).addScaledVector(frame.v,(config.y/100-.5)*height);
-    values[side]={center,frame,size:[Math.max(.01,width),Math.max(.01,width*image.height/image.width)],rotation:[Math.cos(config.rotation*Math.PI/180),Math.sin(config.rotation*Math.PI/180)],opacity:config.opacity/100};
+    values[side]={center,frame,size:[Math.max(.01,width),Math.max(.01,width*image.height/image.width)],rotation:[cos,sin],opacity:config.opacity/100};
   }
-  window.car.traverse(node=>{for(const m of Array.isArray(node.material)?node.material:[node.material]){
+  if(!values.top)restoreRoofGlass();
+  window.car.traverse(node=>{
+    const top=values.top,glass=top&&roofGlassLayer(node,box);
+    if(glass){
+      const uniforms=glass.uniforms;
+      uniforms.haWrapTexture={value:wrapTexture};
+      for(const [key,value] of Object.entries({Center:top.center,U:top.frame.u,V:top.frame.v,Size:top.size,Rotation:top.rotation,Rect:wrapAtlasRects.get('top'),Opacity:top.opacity}))uniforms['haWrapTop'+key]={value};
+      return;
+    }
+    for(const m of Array.isArray(node.material)?node.material:[node.material]){
     if(!m?.uniforms?.blendColor||!m.fragmentShader?.includes('fresnelCol'))continue;
     if(!m.uniforms.haWrapLeftOpacity){const needle='vec3 diffuse = fresnelCol * NdotL;';if(!m.fragmentShader.includes(needle))continue;
       const declarations=`uniform highp sampler2D haWrapTexture;`+wrapSides.map(side=>{const p=wrapUniforms(side);return `uniform highp vec3 ${p}Center;uniform highp vec3 ${p}U;uniform highp vec3 ${p}V;uniform highp vec3 ${p}N;uniform highp vec2 ${p}Size;uniform highp vec2 ${p}Rotation;uniform highp vec4 ${p}Rect;uniform highp float ${p}Opacity;`}).join('');
@@ -225,13 +294,13 @@ function updateWrap(){
   }});redraw();return wrapMaterials.size>0;
 }
 async function setWrap(value){
-  if(!value){++wrapSerial;wrapConfig={version:2,faces:{}};for(const m of wrapMaterials){m.uniforms.haWrapTexture.value=null;for(const side of wrapSides)m.uniforms[wrapUniforms(side)+'Opacity'].value=0;}wrapTexture?.dispose();wrapTexture=null;wrapImages.clear();wrapSources.clear();wrapPendingSources.clear();wrapAtlasRects.clear();redraw();return true;}
+  if(!value){++wrapSerial;wrapConfig={version:2,faces:{}};restoreRoofGlass();for(const m of wrapMaterials){m.uniforms.haWrapTexture.value=null;for(const side of wrapSides)m.uniforms[wrapUniforms(side)+'Opacity'].value=0;}wrapTexture?.dispose();wrapTexture=null;wrapImages.clear();wrapSources.clear();wrapPendingSources.clear();wrapAtlasRects.clear();redraw();return true;}
   let faces=value.version===2&&value.faces&&typeof value.faces==='object'?value.faces:(value.image?{[wrapSides.includes(value.side)?value.side:'left']:value}:null);if(!faces)return false;
   const normalized={};let total=0;
   for(const side of wrapSides){const face=faces[side];if(!face)continue;if(!['left','right','top','front','rear'].includes(face.side||side))return false;
     for(const [key,min,max] of [['x',0,100],['y',0,100],['scale',5,200],['rotation',-180,180],['opacity',0,100]])if(!Number.isFinite(face[key])||face[key]<min||face[key]>max)return false;
     const image=face.image||wrapPendingSources.get(side)||wrapSources.get(side);if(!image||typeof image!=='string'||image.length>1400000||!/^data:image\/(png|jpeg|webp);base64,/.test(image))return false;total+=image.length;
-    normalized[side]={image,side,x:face.x,y:face.y,scale:face.scale,rotation:face.rotation,opacity:face.opacity};
+    normalized[side]={image,side,pattern:['solid','stripe','gradient','carbon'].includes(face.kind),x:face.x,y:face.y,scale:face.scale,rotation:face.rotation,opacity:face.opacity};
   }
   if(total>2400000)return false;
   const gl=window.viewer?.renderer?.getContext?.();if(gl?.MAX_TEXTURE_IMAGE_UNITS){const limit=gl.getParameter(gl.MAX_TEXTURE_IMAGE_UNITS);if(limit<8||(gl.MAX_TEXTURE_SIZE&&gl.getParameter(gl.MAX_TEXTURE_SIZE)<2048))return false;const material=window.car?.carPaint_CarPaintMaterial,samplers=material?.fragmentShader?.match(/uniform\s+(?:lowp|mediump|highp)?\s*sampler\w*\s+(\w+)/g)||[],base=samplers.filter(decl=>!/\bhaWrapTexture\b/.test(decl));if(base.length+(samplers.length===base.length?1:0)>limit)return false;}
@@ -327,11 +396,16 @@ function projectedCarScale(camera,xLimit,yLimit){
 function fitPreviewCamera(){
   const v=window.viewer,c=v?.controls;
   if(!c?.setRadiusImmediately)return;
+  const editing=configuredSurface==='wrap';
+  if(editing){
+    const box=carBounds();
+    if(box&&c.target){box.getCenter(c.target);commitCamera(c);}
+  }
   // 车身边缘随车型和取景宽高比变化，两次投影为左右与顶部留出余量。
   for(let i=0;i<2;i++){
-    const scale=projectedCarScale(v.camera,homeView ? .70 : .78,homeView ? .65 : .63);
+    const scale=projectedCarScale(v.camera,editing ? .94 : homeView ? .70 : .78,editing ? .79 : homeView ? .65 : .63);
     if(Math.abs(scale-1)<.04)break;
-    radius=bound(radius*scale,9.75,homeView?22:28);
+    radius=bound(radius*scale,editing ? (c.minDistance??7) : 9.75,homeView?22:28);
     c.setRadiusImmediately(radius);commitCamera(c);
   }
 }
@@ -341,7 +415,7 @@ function configureCamera(){
   const controls=window.viewer?.controls;
   if(!controls)return;
   if(shared){
-    if(configuredSurface&&defaultOrbit)surfaceOrbits.set(configuredSurface,{view:cameraState(controls),zoom:orbitZoom});
+    if(configuredSurface&&configuredSurface!=='wrap'&&defaultOrbit)surfaceOrbits.set(configuredSurface,{view:cameraState(controls),zoom:orbitZoom});
     configuredSurface=desiredSurface;
     homeView=configuredSurface==='home';appearanceView=!homeView;
     radius=homeView ? 11.5 : cfg.radius;offset=homeView ? .04 : 0;drop=homeView ? 18 : 0;
@@ -416,14 +490,27 @@ function releaseOrbit(azimuth,pitch){
   }
   orbitFrame=requestAnimationFrame(step);
 }
-function resetOrbit(animate){
+function resetOrbit(animate,face){
   stopOrbit();
   const v=window.viewer,c=v?.controls;
   if(!released||!c||!defaultOrbit||savedView||!canDraw())return;
-  const end=defaultOrbit,start=cameraState(c),zoom=orbitZoom;
+  const end={...defaultOrbit},start=cameraState(c),zoom=orbitZoom;
+  if(face){
+    const bounds=carBounds(),frame=bounds&&wrapFrame(face,bounds);
+    if(!appearanceView||!frame)return;
+    const direction=face==='top'?frame.v:frame.n;
+    end.theta=Math.atan2(direction.x,direction.z);
+    end.phi=face==='top'?c.minPolarAngle:c.maxPolarAngle;
+    if(configuredSurface==='wrap'){
+      cameraAt(c,end);
+      const {min,max}=orbitDistanceLimits(c);
+      end.radius=bound(end.radius*projectedCarScale(v.camera,.93,.79),min,max);
+      cameraAt(c,start);
+    }
+  }
   const turn=Math.atan2(Math.sin(end.theta-start.theta),Math.cos(end.theta-start.theta));
   const tilt=end.phi-start.phi;
-  function finish(){orbitFrame=0;orbitZoom=1;cameraAt(c,end);redraw();}
+  function finish(){orbitFrame=0;orbitZoom=end.radius/defaultOrbit.radius;cameraAt(c,end);redraw();}
   if(!animate||reduced?.matches||Math.abs(turn)+Math.abs(tilt)+Math.abs(end.radius-start.radius)<.01){finish();return;}
   markMoving(315);
   const began=performance.now();
@@ -431,7 +518,7 @@ function resetOrbit(animate){
     const progress=bound((now-began)/220,0,1);
     if(progress===1){finish();return;}
     const t=smoothStep(progress);
-    orbitZoom=zoom+(1-zoom)*t;
+    orbitZoom=zoom+(end.radius/defaultOrbit.radius-zoom)*t;
     placeOrbit(v,c,{...start,theta:start.theta+turn*t,phi:start.phi+tilt*t});
     orbitFrame=requestAnimationFrame(step);
   }
@@ -574,7 +661,7 @@ window.onFullCarLoaded=()=>{
 window.addEventListener("message",ev=>{
   if(ev.source!==parent||ev.origin!==parentOrigin)return;
   const d=ev.data;if(!d||typeof d!=="object")return;
-  if(d.t==="surface"&&shared&&(d.view==='home'||d.view==='appearance')){
+  if(d.t==="surface"&&shared&&['home','appearance','wrap'].includes(d.view)){
     desiredSurface=d.view;scheduleSurface();
   }else if(d.t==="visibility"&&appViewer){
     const visible=d.visible===true;
@@ -601,6 +688,7 @@ window.addEventListener("message",ev=>{
   else if(d.t==="orbit-stop")stopOrbit();
   else if(d.t==="orbit-release")releaseOrbit(d.azimuth,d.pitch);
   else if(d.t==="orbit-reset")resetOrbit(d.animate===true);
+  else if(d.t==='wrap-face'&&wrapSides.includes(d.face))resetOrbit(true,d.face);
   else if(d.t==='wrap'){try{void setWrap(JSON.parse(d.value)).then(ok=>post({t:'ack',of:'wrap',ok}),()=>post({t:'ack',of:'wrap',ok:false}))}catch{post({t:'ack',of:'wrap',ok:false})}}
   else if(d.t==="view"){
     if(Number.isFinite(d.radius)&&d.radius>0)radius=d.radius;

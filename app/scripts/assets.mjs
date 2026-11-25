@@ -4,6 +4,7 @@ const app = resolve(import.meta.dirname, '..');
 const root = resolve(app, '..');
 const localDemo = process.argv.includes('--demo');
 mkdirSync(resolve(app, 'public/assets'), { recursive: true });
+copyFileSync(resolve(root, 'docs/wechat-reward.png'), resolve(app, 'public/assets/wechat-reward-qr.png'));
 for (const name of ['leaplink-icon.png', 'leaplink-icon-simple.png', 'leaplink-lockup.png']) {
   const source = resolve(root, 'icons/brand', name);
   if (existsSync(source)) copyFileSync(source, resolve(app, 'public/assets', name));

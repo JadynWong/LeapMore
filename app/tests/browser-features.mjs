@@ -171,8 +171,81 @@ try {
     await click('完成');
     await click('自定义车衣');
     await click('条纹');
+    await b.click('.wrap-palette [aria-label=珊瑚红]');
+    assert.equal(await b.run("document.querySelector('.wrap-adjustments').open"), false);
+    await b.click('.wrap-adjustments summary');
     await match(/不透明度/);
+    await fill('旋转', '45');
+    await match(/45°/);
+    await click('左侧', '.wrap-faces button');
+    await click('渐变');
+    await b.click('.wrap-palette [aria-label=冰川蓝]');
+    await wait(300);
+    const leftAngle = await b.run("window.appearanceFrame.contentWindow.viewer.controls.getAzimuthalAngle()");
+    await click('右侧', '.wrap-faces button');
+    await wait(300);
+    const rightAngle = await b.run("window.appearanceFrame.contentWindow.viewer.controls.getAzimuthalAngle()");
+    assert.ok(Math.cos(leftAngle - rightAngle) < -.95, '左右车身预览应朝向相反的两侧');
+    assert.equal(await b.run("document.querySelector('.wrap-clear button').disabled"), true);
+    await click('车头', '.wrap-faces button');
+    assert.equal(await b.run("document.querySelector('.wrap-materials [aria-pressed=true]').innerText.trim()"), '条纹');
+    await match(/45°/);
     await click('清除本面');
+    await click('完成');
+    await click('自定义车衣');
+    await click('左侧', '.wrap-faces button');
+    assert.equal(await b.run("document.querySelector('.wrap-materials [aria-pressed=true]').innerText.trim()"), '渐变');
+    assert.equal(await b.run("document.querySelector('.wrap-palette [aria-pressed=true]').ariaLabel"), '冰川蓝');
+    await click('车顶', '.wrap-faces button');
+    await click('条纹');
+    await click('位置与透明度', 'summary');
+    await fill('缩放','180');
+    await wait(400);
+    assert.ok(await b.run(`(() => {
+      const car = window.appearanceFrame.contentWindow.car;
+      const top = car.carPaint_CarPaintMaterial.uniforms;
+      const roof = car.getObjectByName('body_m_glass_os')?.material.uniforms;
+      const frontGlass = car.getObjectByName('body_m_glass')?.material.uniforms;
+      return top.haWrapTopSize?.value[1] > 4.7 && roof?.haWrapTopOpacity?.value > 0 && !frontGlass?.haWrapTopOpacity;
+    })()`), 'C10 车顶应完整覆盖，前挡风玻璃应保留原材质');
+    await click('右侧', '.wrap-faces button');
+    await b.run(`(async () => {
+      const canvas=document.createElement('canvas');
+      canvas.width=8; canvas.height=4;
+      canvas.getContext('2d').fillRect(0,0,4,4);
+      const file=new File([await new Promise(resolve=>canvas.toBlob(resolve,'image/png'))], 'decal.png', {type:'image/png'});
+      const transfer=new DataTransfer(); transfer.items.add(file);
+      const input=document.querySelector('.wrap-upload input'); input.files=transfer.files; input.dispatchEvent(new Event('change',{bubbles:true}));
+    })()`);
+    await match(/碳纤维\s+图片/);
+    await click('预设');
+    await fill('预设名称','车顶条纹');
+    await click('保存','dialog button');
+    await match(/已保存「车顶条纹」/);
+    await b.click('dialog[open] [aria-label=关闭]');
+    await click('清除全部');
+    await b.reload();
+    await route('/appearance');
+    await match(/本地样例/,23000);
+    await click('自定义车衣');
+    await click('预设');
+    await match(/车顶条纹/);
+    await b.click('[aria-label=应用预设车顶条纹]');
+    await click('右侧', '.wrap-faces button');
+    assert.equal(await b.run("document.querySelector('.wrap-materials [aria-pressed=true]').innerText.trim()"),'图片');
+    await click('车顶', '.wrap-faces button');
+    assert.equal(await b.run("document.querySelector('.wrap-slider input[aria-label=缩放]').value"),'180');
+    await click('左侧', '.wrap-faces button');
+    assert.equal(await b.run("document.querySelector('.wrap-palette [aria-pressed=true]').ariaLabel"), '冰川蓝');
+    await b.send('Emulation.setDeviceMetricsOverride',{width:320,height:568,deviceScaleFactor:1,mobile:true});
+    assert.ok(await b.run("document.querySelector('.wrap-body').scrollWidth===document.querySelector('.wrap-body').clientWidth && document.querySelector('.wrap-header .btn').getBoundingClientRect().right<=innerWidth"));
+    await b.send('Emulation.setDeviceMetricsOverride',{width:390,height:844,deviceScaleFactor:1,mobile:true});
+    await click('预设');
+    await b.click('[aria-label=删除预设车顶条纹]');
+    await click('确认删除','dialog button');
+    await match(/已删除「车顶条纹」/);
+    await b.click('dialog[open] [aria-label=关闭]');
+    await click('清除全部');
     await click('完成');
   }
   await click('仅 2D');
@@ -234,19 +307,36 @@ try {
   await click('退出登录');
   await match(/退出登录？/);
   await click('取消');
+  assert.equal(await b.run(`[...document.querySelectorAll('.list-row')].find(row => row.textContent.trim() === '关于 LeapMore')
+    ?.nextElementSibling?.textContent.trim()`), '赞赏作者');
+  await click('赞赏作者');
+  assert.equal(await b.run("document.querySelector('.reward-sheet a[target=_blank]').href"), 'https://afdian.com/a/mirato');
+  await b.click('.reward-wechat summary');
+  assert.deepEqual(await b.run(`(async () => {
+    const image = document.querySelector('.reward-wechat img');
+    await image.decode();
+    const download = document.querySelector('.reward-download');
+    return [image.naturalWidth > 0, download.href === image.src, download.download];
+  })()`), [true, true, 'LeapMore-微信赞赏码.png']);
+  await b.click('dialog[open] [aria-label=关闭]');
   await click('关于 LeapMore');
   const packageVersion = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8')).version;
   assert.ok((await b.run('document.querySelector("dialog[open] .sub").textContent')).includes(packageVersion));
   await b.send('Emulation.setDeviceMetricsOverride', { width: 320, height: 700, deviceScaleFactor: 1, mobile: true });
-  const repositoryLinks = await b.run(`[...document.querySelectorAll('dialog[open] .sec a.row')].map(link => [link.href, link.querySelector('small')?.innerText])`);
-  const repositoryUrls = ['https://github.com/MiRaToo/LeapMore', 'https://gitcode.com/MiraRato/LeapMore'];
-  assert.deepEqual(repositoryLinks, repositoryUrls.map(url => [url, url]));
-  assert.ok(await b.run(`[...document.querySelectorAll('dialog[open] a small')].every(label => label.offsetWidth >= label.scrollWidth)`));
-  assert.equal(await b.run("document.querySelector('dialog a[href*=mirato66]').href"), 'https://leapmore.mirato66.cloud/');
-  await click('GitCode', '[aria-label="首选更新源"] button');
-  await b.click('dialog[open] [aria-label=关闭]');
-  await click('关于 LeapMore');
-  assert.equal(await b.run(`document.querySelector('[aria-label="首选更新源"] button[aria-pressed="true"]').textContent`), 'GitCode');
+  assert.ok(await b.run(`(() => {
+    const links = [...document.querySelectorAll('.about-channels a')];
+    return links.length === 3 && links.every(link => link.checkVisibility() && !link.closest('details'));
+  })()`));
+  const destinations = await b.run(`[...document.querySelectorAll('dialog[open] a')].map(link =>
+    ({ href: link.href, label: link.textContent.trim(), button: link.classList.contains('btn'), fits: link.clientWidth >= link.scrollWidth }))`);
+  assert.equal(destinations.length, 5);
+  assert.equal(new Set(destinations.map(link => link.href)).size, destinations.length);
+  assert.ok(destinations.every(link => link.button && link.fits));
+  assert.deepEqual(destinations.slice(1).map(link => link.href), [
+    'https://github.com/MiRaToo/LeapMore/releases', 'https://gitcode.com/MiraRato/LeapMore/releases',
+    'https://pan.quark.cn/s/9e6168a73f21', 'https://leapmore.mirato66.cloud/',
+  ]);
+  assert.equal(await b.run(`!!document.querySelector('dialog [aria-label="首选更新源"]')`), false);
   await b.run(`const originalFetch = window.fetch;
     window.fetch = (url, options) => String(url).startsWith('https://api.gitcode.com/') ? Promise.resolve(Response.json([])) :
       String(url).startsWith('https://api.github.com/') ? Promise.resolve(Response.json([{
@@ -257,6 +347,7 @@ try {
   await match(/下载 v0\.2\.0 · APK/);
   assert.equal(await b.run("document.querySelector('dialog a.btn.accent').href"), 'https://github.com/MiRaToo/LeapMore/releases/download/v0.2.0/test.apk');
   await b.click('dialog[open] .about-license summary');
+  assert.doesNotMatch(await b.run("document.querySelector('.about-license').innerText"), /版权所有/);
   assert.match(await b.run("document.querySelector('dialog[open] details[open] .about-license-text').innerText"), /GNU GENERAL PUBLIC LICENSE/);
   assert.equal(b.errors.length, 0, JSON.stringify(b.errors));
   console.log('控车弹层、空调预设、常用地址导航、路线地图、车型、能源卡片、操作密码、主题和预发布检查通过。');

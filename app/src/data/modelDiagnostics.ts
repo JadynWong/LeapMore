@@ -76,7 +76,7 @@ export function diagnosticFamily(value: unknown) {
   return typeof value === 'string' ? /(?:^|[^A-Z0-9])([ABCDT]\d{2}|S01|LAFA5(?:ULTRA)?)(?=$|[^A-Z0-9])/i.exec(value.trim())?.[1].toUpperCase() : undefined;
 }
 export function diagnosticYear(value: unknown) {
-  return /^(19|20)\d{2}$/.test(String(value)) ? Number(value) : undefined;
+  return /^\d{4}$/.test(String(value)) ? Number(value) : undefined;
 }
 
 const memory = new Map<string, DiagnosticRun[]>();

@@ -22,7 +22,7 @@ export async function syncHistory(config: HAConfig, vehicle: string, vin: string
   const end = Date.now();
   const since = end - config.days * MS_DAY;
   const withAttributes = bindings.some(binding => typeof binding === 'object');
-  const signature = JSON.stringify([entities.slice().sort(), config.days, ...(withAttributes ? ['attributes:v1'] : [])]);
+  const signature = JSON.stringify([entities.slice().sort(), config.days, ...(withAttributes ? [mapping.batteryMinTemp ? 'attributes:v2' : 'attributes:v1'] : [])]);
   const prior = await readDataset<History & { signature: string }>(key);
   const cached = prior?.signature === signature ? prior : undefined;
   let current: History = cached ?? { entries: [], cursor: since };

@@ -63,6 +63,8 @@ export interface CarState {
   odometer?: number | null;
   speedKmh?: number | null;
   chargingPowerKw?: number | null;
+  batteryMinTempC?: number | null;
+  batteryHeating?: boolean | null;
   chargeType?: 'ac' | 'dc';
   remainingChargeMinutes?: number | null;
   healthCharging?: boolean | null;

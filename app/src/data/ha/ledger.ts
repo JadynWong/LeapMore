@@ -64,13 +64,31 @@ export async function haChargeSessions(config: HAConfig, vin: string, days: numb
   return ledgerRows(reply.sessions, asCharge);
 }
 
-export async function haOlderChargeSessions(config: HAConfig, vin: string, signal: AbortSignal) {
-  const now = Date.now(), from = chargeWindowStart(90, now), to = chargeWindowStart(31, now) - 1;
+export async function haOlderChargeSessions(config: HAConfig, vin: string, signal: AbortSignal, from = chargeWindowStart(90)) {
+  const to = chargeWindowStart(31) - 1;
   const result = await vehicleChargeIndex(config, vin, from, to, signal);
   const charges = ledgerRows(result.rows, raw => asCharge({ id: raw.record_id, started_at: Number(raw.started_at_ms) / 1000,
     ended_at: Number(raw.ended_at_ms) / 1000, charge_type: raw.charge_type, partial: raw.phase !== 'completed',
     kwh: raw.energy && typeof raw.energy === 'object' && 'kwh' in raw.energy ? raw.energy.kwh : null }));
   return { charges: charges.filter(row => row.startedAt >= from && row.startedAt <= to), coverage: result.coverage };
+}
+
+export async function haTripHistory(config: HAConfig, vin: string, from: number, signal: AbortSignal) {
+  const trips = new Map<string, Trip>();
+  let end = Date.now() / 1000;
+  for (;;) {
+    const days = Math.min(3650, Math.ceil((end * 1000 - from) / 86400_000) + 1);
+    const window = !from && !trips.size ? {} : { days, end };
+    const result = await vehicleLedger<{ vin: string; trips: unknown }>(config, vin, 'trips/list', { ...window, limit: 2000 }, signal);
+    if (!Array.isArray(result.trips)) throw new Error('行程历史暂不可用。');
+    const page = ledgerRows(result.trips, asTrip);
+    for (const trip of page) if (trip.startedAt >= from) trips.set(trip.id, trip);
+    const oldest = Math.min(...page.map(trip => trip.startedAt));
+    if (result.trips.length < 2000 || oldest <= from) break;
+    if (!Number.isFinite(oldest) || oldest / 1000 > end) throw new Error('无法读取更早的行程。');
+    end = (oldest - 1) / 1000;
+  }
+  return [...trips.values()];
 }
 
 export async function syncLedger(config: HAConfig, vin: string, signal: AbortSignal) {

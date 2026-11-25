@@ -11,7 +11,7 @@ export type Reading = Partial<Record<Field, number | string | null>> & { positio
 export type Frame = { at: number; data: Reading; changed: Field[] };
 export type Trip = TripSummary & { route: Point[]; speeds: { at: number; value: number }[]; gap: boolean; group?: 'archive'; socStart?: number | null; socEnd?: number | null };
 export type Charge = ChargeSession & { powers: { at: number; value: number }[]; powerTimeline?: MetricSample[]; group?: 'archive'; active?: boolean;
-  energyBasis?: 'official' | 'soc'; sampledId?: string };
+  energyBasis?: 'official' | 'soc'; sampledId?: string; minRecordedBatteryTempC?: number };
 
 const missing = new Set(['', 'unavailable', 'unknown', 'none', 'null', 'nan', '—']);
 export const numberOf = (value: unknown): number | null => {
@@ -88,7 +88,7 @@ export function framesOf(entries: Sample[], mapping: Mapping): Frame[] {
       if (typeof binding === 'object') {
         const value = item.attrs?.[binding.attribute];
         data[key] = missing.has(words(item.state)) || value == null ? null :
-          binding.attribute === 'speed' ? numberOf(value) : typeof value === 'boolean' ? String(value) : null;
+          binding.attribute === 'speed' || binding.attribute === 'battery_min_temp' ? numberOf(value) : typeof value === 'boolean' ? String(value) : null;
       } else data[key] = normalized(key, item);
       seen.set(key, item.at);
       if (key === 'tracker') {
@@ -108,6 +108,16 @@ export function framesOf(entries: Sample[], mapping: Mapping): Frame[] {
     } else frames.push({ at: item.at, data: { ...data }, changed: [...keys] });
   }
   return frames;
+}
+
+export function lowestBatteryTemperature(frames: Frame[], start: number, end: number) {
+  let lowest: number | null = null;
+  for (const frame of frames) {
+    if (frame.at < start || frame.at > end || !frame.changed.includes('batteryMinTemp')) continue;
+    const temperature = numberOf(frame.data.batteryMinTemp);
+    if (temperature !== null && (lowest === null || temperature < lowest)) lowest = temperature;
+  }
+  return lowest;
 }
 
 const diff = (start: unknown, end: unknown) => {

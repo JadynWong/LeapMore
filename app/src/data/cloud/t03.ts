@@ -13,7 +13,7 @@ const signals = {
   '1938': ['acSwitch'], '2183': ['acSetting'], '1941': ['acAirVolume'],
   '1816': ['steeringWheelHeating'], '49': ['leftMirrorHeating'], '50': ['rightMirrorHeating'],
   '1349': ['indoorTemp', 'interiorTemp'], '1177': ['batteryVoltage'],
-  '1178': ['batteryCurrent'], '1200': ['chargeRemainTime'], '1149': ['chargeState'],
+  '1178': ['batteryCurrent'], '1182': ['minSingleTemp', 'minBatteryTemp'], '1200': ['chargeRemainTime'], '1149': ['chargeState'],
   '1197': ['dcInputFastCharge'],
 } as const;
 const booleanSignals = new Set(['1298', '1281', '1693', '1694', '1695', '1696', '1938', '1197', '1816', '49', '50']);

@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process';
-import { cpSync, existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { isIP } from 'node:net';
 
@@ -29,6 +29,7 @@ if (platform === 'android') {
     recursive: true, filter: source => !source.includes('/res') && !source.endsWith('.xml'),
   });
   cpSync('native/android/res', main + '/res', { recursive: true });
+  js('scripts/widget-assets.mjs', 'android');
   if (existsSync('../icons/android')) cpSync('../icons/android', main + '/res', { recursive: true });
   const host = process.env.LEAPMORE_ANDROID_HA_HTTP_HOST;
   if (host && !/^[a-z0-9-]+(?:\.[a-z0-9-]+)*\.local$/i.test(host) &&
@@ -98,10 +99,16 @@ if (platform === 'android') {
 } else if (platform === 'ios') {
   if (!existsSync('ios/App')) js(cap, 'add', 'ios', '--packagemanager', 'SPM');
   js(cap, 'sync', 'ios');
+  js('scripts/widget-assets.mjs', 'ios');
   run('ruby', ['scripts/ios-project.rb']);
 } else {
   const hionic = 'node_modules/hionic/bin/hcap';
   if (!existsSync('openharmony/entry')) js(hionic, 'platform', 'add', 'openharmony');
+  // hcap overlays dist on its native bridge. Replace the Vite asset directories to drop stale bundles and demo models.
+  for (const folder of ['assets', 'viewer', 'car3d-demo']) {
+    rmSync('openharmony/entry/src/main/resources/rawfile/www/' + folder, { recursive: true, force: true });
+  }
   js(hionic, 'copy', 'openharmony');
+  js('scripts/widget-assets.mjs', 'harmony');
   js('scripts/harmony-project.mjs');
 }

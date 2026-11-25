@@ -13,7 +13,6 @@ interface DesktopState {
   inside: string;
   locked: string;
   odometer: string;
-  modelImage: string;
   colorScheme: 'light' | 'dark';
   climateOn: boolean;
   trunkOpen: boolean;
@@ -24,6 +23,8 @@ interface DesktopState {
   simulated: boolean;
   canLock: boolean;
   canControl: boolean;
+  canTrunk: boolean;
+  canFind: boolean;
 }
 export type WidgetControlRequest = { action: string; vehicle: string };
 const plugin = registerPlugin<{

@@ -1,7 +1,9 @@
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 import { browser, wait } from './cdp.mjs';
 
 const base = process.env.LEAPMORE_DEMO_ORIGIN ?? 'http://127.0.0.1:5175/';
+const { version } = JSON.parse(readFileSync(new URL('../package.json', import.meta.url), 'utf8'));
 const tab = await browser('about:blank', 320, 700);
 const notice = 'dialog[open] h2';
 const title = () => tab.run(`document.querySelector(${JSON.stringify(notice)})?.textContent ?? ''`);
@@ -92,19 +94,19 @@ try {
   await until(async () => (await tab.run('document.body.innerText')).includes('暂时无法查询发布版本'));
   await until(async () => (await tab.run('document.querySelector("dialog a.update-destination.accent").innerText')).includes('无法连接'));
   assert.equal(await tab.run('document.querySelector("dialog a.update-destination.accent").href'),
-    'https://github.com/MiRaToo/LeapMore/releases/download/v0.1.1/LeapMore-v0.1.1-android.apk');
+    `https://github.com/MiRaToo/LeapMore/releases/download/v${version}/LeapMore-v${version}-android.apk`);
   assert.equal(await tab.run('document.querySelector("dialog a[href*=quark]").href'), 'https://pan.quark.cn/s/9e6168a73f21');
   await tab.click('dialog[open] [role=switch]');
   await tab.click('dialog[open] [aria-label="关闭"]');
   await reopen();
   assert.equal(await title(), '');
-  await tab.run('sessionStorage.removeItem("fixtureOffline"); sessionStorage.setItem("fixtureTag","v0.1.1")');
+  await tab.run(`sessionStorage.removeItem("fixtureOffline"); sessionStorage.setItem("fixtureTag", ${JSON.stringify('v' + version)})`);
   await reopen();
   assert.equal(await title(), '');
   await click('关于 LeapMore');
   await click('检查更新');
   await until(async () => (await tab.run('document.body.innerText')).includes('当前已是最新版本'));
-  assert.match(await tab.run('document.querySelector("dialog a.update-destination.accent").textContent'), /下载 v0\.1\.1 · APK/);
+  assert.ok((await tab.run('document.querySelector("dialog a.update-destination.accent").textContent')).includes(`下载 v${version} · APK`));
   assert.deepEqual(tab.errors, []);
   console.log('Verified startup and foreground checks, modal ordering, per-version skipping, persistent reminders and public download links.');
 } finally { await tab.close(); }

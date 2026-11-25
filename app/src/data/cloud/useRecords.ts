@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
-import { deleteDataset, readDataset, saveDataset, updateDataset } from '../localDatabase';
+import { deleteDataset, readDataset, updateDataset } from '../localDatabase';
 import type { CarState } from '../types';
 import type { Charge, Frame } from '../ha/measurements';
 import { deriveTrips, drivingOf, numberOf } from '../ha/measurements';
 import type { LiveVehicleClient } from './LiveClient';
-import { appendCloudFrame, cloudFrame } from './records';
+import { appendCloudFrame, cloudFrame, dayStart } from './records';
 import { reconcileCharges, sampledCharges } from './charges';
 import type { VehicleEnergySettings } from '../vehicleEnergy';
 
@@ -48,10 +48,13 @@ export function useCloudRecords(key: string, vehicle: string, client: LiveVehicl
 
   const charges = useQuery({ queryKey: ['cloud', 'charges', key], enabled, staleTime: chargeCacheTime, retry: false,
     queryFn: async ({ signal }) => {
+      const at = Date.now(), from = dayStart(at) - 89 * 86_400_000;
       const rows = await client!.getCharges(vehicle, signal);
       signal.throwIfAborted();
-      await saveDataset(chargeKey, { at: Date.now(), rows }).catch(() => {});
-      return rows;
+      const result = await updateDataset<ChargeCache>(chargeKey, prior => ({ at, rows: [...new Map([
+        ...(prior?.rows ?? []).filter(row => row.startedAt < from), ...rows,
+      ].map(row => [row.id, row])).values()] })).catch(() => ({ rows }));
+      return result.rows;
     }, refetchInterval: chargeCacheTime });
   const cachedCharges = useQuery({ queryKey: ['cloud', 'cached-charges', key], enabled, staleTime: Infinity,
     queryFn: () => readDataset<ChargeCache>(chargeKey).then(value => value ?? null) });
@@ -90,6 +93,7 @@ export function useCloudRecords(key: string, vehicle: string, client: LiveVehicl
     setSaved(undefined);
     if (key) await Promise.all([deleteDataset(frameKey), deleteDataset(chargeKey), deleteDataset('cloud-energy:' + key)]);
   }
-  return { trips, charges: rows, activeTrip, activeCharge, loading: enabled && charges.isFetching,
+  return { trips, charges: rows, frames, activeTrip, activeCharge, loading: enabled && charges.isFetching,
+    restoringFrames: enabled && saved?.key !== frameKey && !issue && !blocked.current,
     error: charges.error, issue, clear, refreshCharges: refetch };
 }

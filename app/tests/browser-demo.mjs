@@ -154,12 +154,18 @@ try{
  })`));
  await b.click('dialog[open] [aria-label="关闭"]');
  await page('/widgets'); assert.ok(await b.run(`${find('寻车')}.getAttribute('aria-label') === '鸣笛寻车'`));
+ assert.equal(await b.run("document.querySelectorAll('.widget-medium .widget-stat').length"), 2);
+ assert.ok(await b.run("!!document.querySelector('.widget-brand-status .widget-charge-state')"));
  await click('小 · 2×2'); assert.equal(await b.run(`!!${find('寻车')}`),false);
  await click('大 · 4×4'); assert.equal(await b.run(`!!${find('寻车')}`),true); await shot('widget-320');
 
+ async function openDemoSettings() {
+   await page('/states');
+   if (!await b.run('document.querySelector(".diagnostic-demo").open')) await b.click('.diagnostic-demo > summary');
+ }
  const grantSelectors=['.debug-grants label:nth-of-type(2) input','.debug-grants label:nth-of-type(3) input','.debug-grants label:nth-of-type(4) input'];
  for(let mask=0;mask<8;mask++) {
-  await page('/states');
+  await openDemoSettings();
   for(let i=0;i<3;i++) {
    const s=grantSelectors[i], wanted=!!(mask & (1<<i));
    const checked=await b.run('document.querySelector('+JSON.stringify(s)+').checked');
@@ -172,7 +178,7 @@ try{
   await page('/energy');
   assert.equal(await b.run('document.body.innerText.includes("里程能耗未授权")'),!(mask&4));
  }
- await page('/states'); await b.run("Array.from(document.querySelectorAll('.debug-grants input:not(:disabled)')).forEach(x=>x.click())"); await page('/home');
+ await openDemoSettings(); await b.run("Array.from(document.querySelectorAll('.debug-grants input:not(:disabled)')).forEach(x=>x.click())"); await page('/home');
  assert.equal(await b.run('document.querySelector(".hero-actions [aria-label=解锁车门]").disabled'),false);
  assert.equal(await b.run('document.querySelector(".hero-actions [aria-label=车窗]").disabled'),true);
  assert.match(await b.run('document.body.innerText'),/车辆定位未授权/);
@@ -198,16 +204,16 @@ try{
  assert.equal(await b.run('document.querySelector(".hero-actions [aria-label=上锁车门]").disabled'),false);
  assert.deepEqual(await lockAppearance(),[...closedLock.slice(0,2), true]);
  await page('/energy'); assert.match(await b.run('document.body.innerText'),/里程能耗未授权/);
- await page('/states');
+ await openDemoSettings();
  await b.click('.debug-check input'); await page('/home'); assert.match(await b.run('document.body.innerText'),/停车挂 P/);
  assert.equal(await b.run('document.querySelector(".hero-actions [aria-label=上锁车门]").disabled'),true);
- await page('/states'); await b.click('.debug-check input');
+ await openDemoSettings(); await b.click('.debug-check input');
  await b.run(`(()=>{const e=document.querySelector('[aria-label=数据状态]');e.value='pending';e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
  await page('/home');await b.click('.hero-actions [aria-label=上锁车门]');await click('确认发送');
  await commandStatus('车辆未确认');await click('关闭');
- await page('/states');
+ await openDemoSettings();
  await b.run(`(()=>{const e=document.querySelector('[aria-label=数据状态]');e.value='normal';e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
- await page('/states'); await b.run("Array.from(document.querySelectorAll('.debug-grants input:not(:disabled)')).forEach(x=>x.click())");
+ await openDemoSettings(); await b.run("Array.from(document.querySelectorAll('.debug-grants input:not(:disabled)')).forEach(x=>x.click())");
  await page('/energy'); let rect=await b.run('(()=>{const r=document.querySelector(".energy-plot").getBoundingClientRect();return {x:r.left+30,y:r.top+50,width:r.width}})()');
  await b.send('Input.dispatchMouseEvent',{type:'mousePressed',x:rect.x,y:rect.y,button:'left',buttons:1,clickCount:1});
  await b.send('Input.dispatchMouseEvent',{type:'mouseMoved',x:rect.x+rect.width/2,y:rect.y,button:'left',buttons:1});
@@ -232,6 +238,7 @@ try{
  })()`));
  await page('/records-source');
  await b.run("[...document.querySelectorAll('button.row')].find(e=>e.innerText.startsWith('电价设置')).click()");
+ for (let i=0; i<30 && !await b.run("!!document.querySelector('dialog[open] .tariff-sheet')"); i++) await wait(80);
  assert.match(await b.run('document.querySelector(".tariff-sheet").innerText'),/直流快充/);
  assert.ok(await b.run(`(() => {
    const sheet = document.querySelector('.tariff-sheet'), edge = sheet.getBoundingClientRect().right;

@@ -1,6 +1,6 @@
 # 从源码构建 LeapMore
 
-LeapMore 使用 React、TypeScript 和 Vite。Android 与 iOS 使用 Capacitor，鸿蒙使用 OpenHarmony Capacitor 适配器。构建会从 `native/` 生成平台工程。Android 以外的平台需要准备自己的签名。
+LeapMore 使用 React、TypeScript 和 Vite。Android 与 iOS 使用 Capacitor，鸿蒙使用 OpenHarmony Capacitor 适配器。构建会从 `native/` 生成平台工程。
 
 ## 安装依赖和本地预览
 
@@ -31,9 +31,13 @@ cd android
 
 准备 Xcode 和 iOS SDK，并安装 Ruby 的 `xcodeproj` gem。执行 `pnpm native:ios` 后，用 Xcode 打开 `app/ios/App/App.xcodeproj`。为 App 和桌面卡片扩展选择同一签名团队及可用的 App Group，再编译安装。默认 App Group 为 `group.com.leapmore.app`。个人团队构建时可按自己的签名配置调整 Bundle ID 和 App Group。
 
+执行 `pnpm package:ios` 生成一个真机侧载包 `ios/build/LeapMore-v<版本>-ios.ipa`。该文件带有临时签名，保留主应用与桌面小组件共享车况所需的 App Group。GitHub Actions 的「iOS IPA」工作流在版本标签或手动运行时提供同一份产物。
+
+使用 SideStore 导入 IPA 时选择「Keep App Extensions」，让主应用和小组件一起重签。安装后打开 LeapMore 同步一次车况，再添加小组件。使用 LiveContainer 可导入同一文件运行主应用，容器内的小组件无法注册到系统桌面。[LiveContainer 官方说明](https://github.com/LiveContainer/livecontainer.github.io/blob/main/docs/faq.md)
+
 ## 鸿蒙
 
-准备 DevEco Studio 与支持 API 26 的 HarmonyOS SDK。按 [OpenHarmony Capacitor 适配器](https://gitcode.com/CPF-Ionic/openHarmony-capacitor)的说明准备 [OpenSSL](https://gitcode.com/li_in/openharmony-capacitor-openssl3.5)。如果 SDK 适配器需要 OpenSSL 文件，将 `LEAPMORE_OHOS_OPENSSL_DIR` 设置为其目录。执行 `pnpm native:harmony` 后，在 DevEco Studio 打开生成的 `app/openharmony` 工程，安装模块依赖，配置签名并构建 HAP。
+准备 DevEco Studio 与支持 API 26 的 HarmonyOS SDK。按 [OpenHarmony Capacitor 适配器](https://gitcode.com/CPF-Ionic/openHarmony-capacitor)的说明准备 [OpenSSL](https://gitcode.com/li_in/openharmony-capacitor-openssl3.5)。如果 SDK 适配器需要 OpenSSL 文件，将 `LEAPMORE_OHOS_OPENSSL_DIR` 设置为其目录。执行 `pnpm native:harmony` 后，在 DevEco Studio 打开生成的 `app/openharmony` 工程，安装模块依赖并构建 HAP。
 
 ## 构建选项
 

@@ -118,6 +118,7 @@ export function ChargingPage() {
   }
   const radius = 62, circumference = 2 * Math.PI * radius;
   const chargeState = current.charging;
+  const temperature = current.batteryTemperature;
   const title = chargeState === 'unplugged' ? '未连接充电枪' : chargeState === 'plugged' ? '等待充电' : chargeLabels[chargeState];
   return <><AppBar title="充电" back="/home" /><div className="page no-nav charging-settings">
     <ControlNotice />
@@ -125,11 +126,18 @@ export function ChargingPage() {
       {current.power !== null && chargeState === 'charging' && <div className="tiny muted">{value(current.power, 1)} kW</div>}</div>
       {chargeState === 'unplugged' && <span className="pill">待机</span>}
       {chargeState === 'plugged' && <span className="pill warn">已插枪</span>}</div>
-      <div className="ring"><svg viewBox="0 0 142 142"><circle cx="71" cy="71" r={radius} fill="none" stroke="var(--card-2)" strokeWidth="9" />
+      <div className="charge-status-body"><div className="ring"><svg viewBox="0 0 142 142"><circle cx="71" cy="71" r={radius} fill="none" stroke="var(--card-2)" strokeWidth="9" />
         <circle cx="71" cy="71" r={radius} fill="none" stroke="var(--accent)" strokeWidth="9" strokeLinecap="round"
           strokeDasharray={circumference} strokeDashoffset={circumference * (1 - Math.min(100, Math.max(0, current.soc ?? 0)) / 100)} /></svg>
         <div className="center"><b className="num">{value(current.soc)}{current.soc !== null && '%'}</b><span>当前电量</span></div></div>
-      <div className="tiny muted">纯电续航 {value(current.electricRange)} km</div></div>
+      <div className="charge-readings">
+        <div><span className="metric-label"><Icon name="route" size={14} />纯电续航</span><b className="num">{value(current.electricRange)} <small>km</small></b></div>
+        <div><span className="metric-label"><Icon name="thermometer" size={14} />电池最低温</span>
+          {temperature ? <><b className="num">{value(temperature.celsius, 1)} <small>°C</small></b>
+            {!simulated && <small>{temperature.source === 'ha' ? 'HA 更新' : '车辆上报'} {stamp(temperature.at)}</small>}
+            {temperature.heating && <small>上报时加热中</small>}</> :
+            <b className="missing-reading">暂无读数</b>}</div>
+      </div></div></div>
     <Section title="充电上限">
       <div className="charge-limit"><input className="slide" type="range" min="50" max="100" step="5" value={shownLimit ?? 50}
         aria-label="充电上限" aria-valuetext={shownLimit === null ? '未知' : shownLimit + '%'} disabled={blocked || storedLimit === null} onChange={e => setLimit(e.target.valueAsNumber)}

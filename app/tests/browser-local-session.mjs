@@ -23,6 +23,7 @@ const hybridHA = process.env.LEAPMORE_HYBRID_HA_TEST_ORIGIN;
 const greenRender = 'https://ueapp-oss-static.leapmotor.com/fixture-green.png';
 const blueRender = 'https://ueapp-oss-static.leapmotor.com/fixture-blue.png';
 const whiteRender = 'https://ueapp-oss-static.leapmotor.com/fixture-white.png';
+const ownerPicture = 'https://ueapp-oss-static.leapmotor.com/fixture-owner.png';
 const marketReads = [];
 const nonce = Buffer.alloc(16, 11).toString('base64url');
 let moduleRights = '100,200,300,400';
@@ -42,6 +43,7 @@ let chargeRequests = 0;
 const fuelRequests = [];
 let soc = 73, reportedAt = Date.now() - 3_600_000, emptySignals = false, minExchange = 0, collectedAt = null;
 let recordSignals = {};
+let rejectSession = false;
 let openings = { 1298: 0, 1281: 1, 1693: 2, 1694: 0, 1695: 0, 1696: 0, 1724: 100 };
 const secondPreheat = { set_id: 'another-plan', on: '0', start_time: '2026-11-27 09:00:00', days: [], preserved: true };
 let preheatPlans = [{ set_id: 'preheat-test', on: '1', start_time: '2026-11-26 07:00:00', days: [1] }, secondPreheat];
@@ -60,6 +62,7 @@ async function open() {
     const headers = Object.fromEntries(Object.entries(request.headers).map(([key, value]) => [key.toLowerCase(), value]));
     let data = {}, status = 200, code, binary, payload, contentType;
     if (request.method === 'OPTIONS') status = 204;
+    else if (rejectSession && ['/signal/info/query', '/account/v1/login', '/appuseroperate/getnewtoken'].some(suffix => path.endsWith(suffix))) code = 302002004;
     else if (url.hostname === 'restapi.amap.com' && path.endsWith('/regeo')) payload = { status:'1', regeocode:{ formatted_address:amapAddress } };
     else if (url.hostname === 'restapi.amap.com' && path.endsWith('/inputtips')) payload = { status:'1', tips:[{
       id:'mock-library', name:'验收图书馆', district:'上海市浦东新区', address:'锦绣路200号', location:'121.471,31.231' }] };
@@ -99,11 +102,11 @@ async function open() {
           data = { vin: vehicle.vin, signal: { sts: Date.now(), soc: '61', expectedMileage: 172, 2188: 0, totalMileage: 2445,
             speed: 0, gearStatus: 0, driverDoorLockStatus: true, bbcmBackDoorStatus: 'false', leftFrontWindowPercent: '18',
             rightFrontWindowPercent: 0, leftRearWindowPercent: 0, rightRearWindowPercent: 0, leftFrontTirePressure: 239,
-            acSwitch: 'false', chargeState: 5 } };
+            acSwitch: 'false', chargeState: 5, minSingleTemp: -3.5 } };
         } else code = 100;
       } else if (minExchange && headers.token !== carToken(minExchange)) code = 302002004;
       else data = { collectTime: collectedAt ?? Date.now(), signalMap: emptySignals ? {} : { sts: reportedAt, 100003: soc, 2188: 312, 1010: gear,
-        2: 121.47, 3: 31.23, 2646: 234, 2653: 235, 2660: 231, ...openings, ...recordSignals } };
+        2: 121.47, 3: 31.23, 2646: 234, 2653: 235, 2660: 231, 1182: 0, 1186: 1, ...openings, ...recordSignals } };
     } else if (path.endsWith('/verifyoperatepwdnew')) {
       const form = new URLSearchParams(request.postData);
       assert.equal(form.get('vin'), vehicle.vin);
@@ -148,7 +151,9 @@ async function open() {
         data = { total: 2, list: payload.pageNum === 1 ? [row] : [row, { ...row, chargeGunStartTs: started - 86_400_000, chargeGunEndTs: ended - 86_400_000, chargeType: 'SLOW' }] };
       }
     } else if (path.endsWith('/vehicleinfo/commonConfig')) data = { config: { 3: { percent: '80', isEnable: '1', circulation: '1', beginTime: '23:00', endTime: '06:00', cycles: '1,1,1,1,1,1,1', recharge: 1 } } };
-    else if (path.endsWith('/mileage/energy/detail')) data = { detail: [{ day: energyDay, accumulatedMileage: '40', accumulatedEnergyConsume: 0 }] };
+    else if (path.endsWith('/mileage/energy/detail')) data = { deliveryDays: 436, totalmileage: 9598, totalAccumulatedMileage: 604,
+      totalEnergy: Number(url.searchParams.get('begintime')) < Date.now() - 365 * 86_400_000 ? 1935 : 81,
+      detail: [{ day: energyDay, accumulatedMileage: '40', accumulatedEnergyConsume: 0 }] };
     else if (path.endsWith('/getLastweekEC')) {
       assert.match(url.searchParams.get('begintime'), /^\d{10}$/);
       assert.match(url.searchParams.get('endtime'), /^\d{10}$/);
@@ -191,9 +196,14 @@ async function open() {
       binary = readFileSync(new URL('../public/assets/c10.png', import.meta.url)).toString('base64');
       contentType = 'image/png';
     }
-    else if (path.endsWith('/carpicture/3d/key')) data = zip
+    else if (path.endsWith('/carpicture/3d/key')) {
+      if (!t03 && url.searchParams.get('vin') === vehicle.vin) assert.equal(headers.cartype, 'C10');
+      assert.equal(url.searchParams.has('year'), false);
+      data = zip
       ? { modelType: 3, h5Key: 'viewer', srcKey: 'model', modelParam: { carType: 'C10', year: 2026, carTypeCode: '605激光雷达版', colorCode: 2 } }
-      : url.searchParams.has('deviceID') ? { modelParam: {}, h5Key: '', srcKey: '' } : { modelType: 2, shareBindUrl: 'https://example.invalid/private-model-url' };
+      : url.searchParams.has('deviceID') ? { modelParam: {}, h5Key: '', srcKey: '' } : { modelType: 2, modelVersion: '1.0', srcKey: '2d-only' };
+    }
+    else if (path.endsWith('/carpicture/key')) data = { picUrl: ownerPicture };
     else if (path.endsWith('/carpicture/key/package') && zip) binary = zip[url.searchParams.get('key')];
     else status = 404;
     const responseHeaders = [
@@ -245,6 +255,7 @@ let tab = await open();
 try {
   await tab.send('Storage.clearDataForOrigin', { origin, storageTypes: 'local_storage,indexeddb' });
   await tab.navigate(base + '#/login');
+  await tab.run(`import('/src/data/cloud/cloud3d.ts').then(module => module.dropCloud3D('fixture-car'))`);
   await until(tab, '!!document.querySelector(\'[aria-label="同意条款"]\')');
   await click(tab, '故障诊断与导出');
   await click(tab, '检测网络与车辆');
@@ -272,10 +283,9 @@ try {
   await click(tab, '保存并进入');
   await text(tab, /73%/);
   if (!zip) {
-    assert.equal(await tab.run(`(() => {
-      const model = document.querySelector('.home-model');
-      return !!model?.querySelector('.c3d-loader') && !model.querySelector('img');
-    })()`), true);
+    await until(tab, `document.querySelector('.home-model[data-model-status="2d"] img')?.currentSrc === ${JSON.stringify(ownerPicture)}`);
+    assert.equal(await tab.run('document.querySelectorAll(".home-model iframe").length'), 0);
+    assert.notEqual(await tab.run('JSON.parse(localStorage.getItem("leapmore.visualMode"))'), '2d');
   }
   await click(tab, '胎压');
   await text(tab, /200–270 kPa/);
@@ -346,16 +356,65 @@ try {
   assert.equal(remoteWrites.length, 2);
   await click(tab, '关闭');
   commandHttpStatus = 200;
-  await tab.reload();
   await text(tab, /73%/);
   await tab.click(lockButton);
   await text(tab, /使用本机保存的操作密码/);
   await click(tab, '取消');
   await tab.run('location.hash="/operation-pin"');
   await text(tab, /发送前验证/);
+  assert.deepEqual(await tab.run('[...document.querySelectorAll(".source-opt b")].map(el=>el.textContent)'), ['直接确认', '每次验证', '发送前不确认']);
+  await text(tab, /容易误触/);
+  const warningColor = await tab.run('getComputedStyle(document.querySelector(".operation-warning")).color');
+  const [wr, wg, wb] = warningColor.match(/\d+/g).map(Number);
+  assert.ok(wr > wg + 40 && wr > wb + 40);
+  await tab.click('.operation-warning');
+  await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "发送前不确认"');
+  await tab.reload();
+  await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "发送前不确认"');
+  const beforeInstant = remoteWrites.length;
+  await tab.run('location.hash="/widget-action?action=find"');
+  await text(tab, /使用本机保存的操作密码/);
+  assert.equal(remoteWrites.length, beforeInstant);
+  await click(tab, '取消');
+  commandStatus = 'success';
+  await tab.run(`(() => {
+    const find = [...document.querySelectorAll('.home button')].find(b => b.textContent === '鸣笛寻车');
+    find.click(); find.click();
+  })()`);
+  await text(tab, /操作成功 · 车端已确认/);
+  assert.deepEqual(remoteWrites.slice(beforeInstant), [['120', { value: 'true' }]]);
+  await until(tab, '!document.querySelector("dialog[open]")');
+  gear = 1;
+  await click(tab, '鸣笛寻车');
+  await text(tab, /未确认车辆已驻车/);
+  await click(tab, '关闭');
+  gear = 0;
+  pinCode = 4;
+  await click(tab, '鸣笛寻车');
+  await text(tab, /已保存的操作密码失效/);
+  await click(tab, '关闭');
+  pinCode = 0;
+  await click(tab, '鸣笛寻车');
+  await until(tab, '!!document.querySelector("dialog [aria-label=零跑操作密码]")');
+  assert.equal(remoteWrites.length, beforeInstant + 1);
+  await confirmControl();
+  await text(tab, /操作成功 · 车端已确认/);
+  await until(tab, '!document.querySelector("dialog[open]")');
+  commandStatus = 'pending';
+  await tab.run('location.hash="/operation-pin"');
+  await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "发送前不确认"');
+  await tab.click('.source-opt:first-of-type');
+  await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "直接确认"');
+  await tab.run('location.hash="/home"');
+  await text(tab, /鸣笛寻车/);
+  await click(tab, '鸣笛寻车');
+  await text(tab, /使用本机保存的操作密码/);
+  assert.equal(remoteWrites.length, beforeInstant + 2);
+  await click(tab, '取消');
+  await tab.run('location.hash="/operation-pin"');
+  await text(tab, /发送前验证/);
   await tab.click('.source-opt:nth-of-type(2)');
   await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "每次验证"');
-  assert.deepEqual(await tab.run('[...document.querySelectorAll(".source-opt b")].map(el=>el.textContent)'), ['直接确认', '每次验证']);
   await tab.run('location.hash="/home"');
   await until(tab, '!!document.querySelector(".home:not([hidden]) .hero-actions")');
   await tab.click(lockButton);
@@ -403,11 +462,14 @@ try {
   assert.equal(chargeRequests, 6);
   await tab.click('.record-panel .trip-row');
   await text(tab, /充电详情/);
-  await text(tab, /23.5 kWh/);
+  await text(tab, /23\.5\s*kWh/);
+  await text(tab, /电池最低温\s*—\s*暂无记录/);
   assert.doesNotMatch(await tab.run('document.body.innerText'), /充电功率|采样|—%/);
   await tab.run('location.hash="/energy"');
   await text(tab, /21.3/);
   await text(tab, /40.0/);
+  assert.deepEqual(await tab.run(`['totalDays','totalKm','totalKwh','monthKm'].map(key =>
+    document.querySelector('[data-energy-card="'+key+'"] strong').textContent.trim())`), ['436','9598','1935.0','604.0 km']);
   assert.equal(await tab.run('document.querySelectorAll(".energy-page > .hint").length'), 0);
   await tab.run('location.hash="/mine/appearance"');
   await text(tab, /浅色/);
@@ -425,6 +487,8 @@ try {
   await until(tab, '!!document.querySelector(\'.location-map .amap-view[data-map-style="vector"]\')');
   await tab.run('location.hash="/charging"');
   await text(tab, /80%/);
+  await text(tab, /电池最低温\s*0\.0\s*°C/);
+  await text(tab, /上报时加热中/);
   assert.equal(await tab.run('document.querySelector(".schedule-grid input").value'), '23:00');
   if (zip) {
     if (process.env.LEAPMORE_TEST_3D_DEBUG) {
@@ -541,10 +605,12 @@ try {
   await text(tab, /42%/);
   await tab.run('location.hash="/states"');
   await text(tab, /演示情景/);
+  await tab.click('.diagnostic-demo > summary');
   await tab.run(`(() => {
     const state = document.querySelector('[aria-label="数据状态"]');
     state.value = 'offline'; state.dispatchEvent(new Event('change', { bubbles: true }));
   })()`);
+  await tab.click('.diagnostic-folds > details:first-child > summary');
   await click(tab, '重新登录');
   await text(tab, /使用演示账号/);
   await click(tab, '使用演示账号');
@@ -597,7 +663,7 @@ try {
     soc = battery;
     gear = speed ? 1 : 0;
     recordSignals = { 1318: mileage, 1319: speed, 1149: charging ? 1 : 0, 1197: 0, 47: charging ? 1 : 0,
-      1177: 400, 1178: charging ? -16 : 0 };
+      1177: 400, 1178: charging ? -16 : 0, 1182: charging ? -2.5 : -11 };
     await until(tab, '!!document.querySelector(".hero-tools button:not(:disabled)")');
     await tab.click('[aria-label="刷新"]');
     await until(tab, `(async () => {
@@ -624,7 +690,8 @@ try {
   assert.equal(await tab.run('document.querySelectorAll(".recording").length'), 0);
   await tab.run('location.hash="/amap"');
   await until(tab, '!!document.querySelector("dialog input[type=password]")');
-  assert.equal(await tab.run("document.querySelector('dialog a.link').href"), 'https://lbs.amap.com/api/webservice/gettingstarted');
+  assert.deepEqual(await tab.run("[...document.querySelectorAll('.amap-key-steps a')].map(a => a.href)"),
+    ['https://lbs.amap.com/', 'https://console.amap.com/dev/key/app']);
   await fill(tab, '高德地图 Key', '0123456789abcdef0123456789abcdef');
   await click(tab, '保存');
   await tab.run('location.hash="/home"');
@@ -654,10 +721,11 @@ try {
   await tab.run(`location.hash="/charges/sampled-charge-${sampleStart + 28000}"`);
   await text(tab, /估算充入电量/);
   await text(tab, /充电功率/);
-  await text(tab, /估算取电 0\.8 kWh/);
+  await text(tab, /估算取电\s*0\.8\s*kWh/);
+  await text(tab, /电池最低温\s*-2\.5\s*°C/);
   await tab.run(`location.hash="/charges/official-${started}-${ended}"`);
   await text(tab, /官方充入电量/);
-  await text(tab, /估算取电 31\.3 kWh/);
+  await text(tab, /估算取电\s*31\.3\s*kWh/);
   await tab.run('location.hash="/records-source"');
   await text(tab, /导出记录/);
   await tab.run(`(() => {
@@ -699,9 +767,10 @@ try {
   await click(tab, '故障诊断与导出');
   await text(tab, /3D 车模诊断/);
   await click(tab, '检测网络与车辆');
-  await text(tab, /读取所选车辆车况 · 成功/);
+  await text(tab, /读取所选车辆车况\s+成功/);
   await click(tab, '检测本车 3D 车模');
   await until(tab, '!!document.querySelector(".diagnostic-preview")');
+  await tab.run('document.querySelector(".diagnostic-preview").scrollIntoView({ block: "center" })');
   await until(tab, zip ? 'document.querySelector(".diagnostic-preview [data-model-status]")?.dataset.modelStatus === "full"' :
     'document.querySelector(".diagnostic-run summary")?.textContent.includes("仅返回 2D")');
   await click(tab, '导出诊断报告（CSV）');
@@ -870,12 +939,19 @@ try {
   await until(tab, 'document.querySelector(".hero .energy-val")?.textContent === "383km"');
   assert.equal(await tab.run(fuelBar), false);
   await tab.run('location.hash="/states"');
+  await until(tab, '!!document.querySelector(".card.diagnostic-fold > summary")');
+  await tab.click('.card.diagnostic-fold > summary');
   await text(tab, /尚无燃油贡献续航的记录/);
   await text(tab, /综合续航 · 383 km/);
   await tab.run('location.hash="/widgets"');
   await text(tab, /桌面卡片预览/);
   await click(tab, '大 · 4×4');
   await until(tab, '!!document.querySelector(".widget-large .widget-level.battery")');
+  assert.ok(await tab.run(`(async () => {
+    const logo = document.querySelector('.widget-large .widget-logo');
+    await logo.decode();
+    return logo.currentSrc === document.querySelector('link[rel="icon"]').href;
+  })()`));
   assert.equal(await tab.run('!!document.querySelector(".widget-level.fuel")'), false);
   assert.match(await tab.run('document.querySelector(".widget-range").innerText'), /383/);
   await tab.run('location.hash="/energy"');
@@ -896,6 +972,8 @@ try {
   await text(tab, /6\.2/);
   assert.ok(fuelRequests.includes(secondVehicle.vin));
   await tab.run('location.hash="/states"');
+  await until(tab, '!!document.querySelector(".card.diagnostic-fold > summary")');
+  await tab.click('.card.diagnostic-fold > summary');
   await text(tab, /本车此前已识别为增程/);
   await click(tab, '管理本车动力类型');
   await tab.click('[aria-label="动力类型"] button:nth-child(2)');
@@ -913,6 +991,22 @@ try {
   console.log('C11 固定 80% 虚假油量、增程空油箱记忆、按车手动覆盖及车辆切换验收通过。');
   includeSecondVehicle = false;
   console.log('首次选车的容量引导可保存或稍后设置，刷新后保留选择。');
+  await tab.run('location.hash="/home"');
+  await until(tab, '!!document.querySelector(".hero-tools button:not(:disabled)")');
+  rejectSession = true;
+  await tab.click('[aria-label="刷新"]');
+  await text(tab, /零跑账号登录已失效/);
+  await tab.click('dialog[open] .confirm-btns button:last-child');
+  assert.equal(await tab.run("location.hash"), '#/login');
+  assert.equal(await tab.run("document.querySelectorAll('dialog[open]').length"), 0);
+  rejectSession = false;
+  await tab.click('[aria-label="同意条款"]');
+  await fill(tab, '手机号', '13800001234');
+  await click(tab, '获取验证码'); await text(tab, /验证码已发送/);
+  await fill(tab, '验证码', '654321');
+  await tab.click('.login form button[type=submit]');
+  await text(tab, /本地验收车辆/);
+  assert.equal(await tab.run("document.querySelectorAll('dialog[open]').length"), 0);
   await tab.run('location.hash="/mine"');
   await text(tab, /退出登录/);
   await click(tab, '退出登录');
@@ -971,9 +1065,9 @@ try {
     const frame = await client.getState(vehicle.id);
     const again = await client.getState(vehicle.id);
     return [vehicle.carType, frame.soc, frame.rangeKm, frame.odometer, frame.tirePressureKpa[0], frame.windowOpen, frame.locked,
-      frame.trunkOpen, frame.isDriving, frame.charging, frame.seatHeat, again.soc];
+      frame.trunkOpen, frame.isDriving, frame.charging, frame.seatHeat, again.soc, frame.batteryMinTempC];
   })()`);
-  assert.deepEqual(t03States, ['T03', 61, 172, 2445, 239, true, true, false, false, 'unplugged', null, 61]);
+  assert.deepEqual(t03States, ['T03', 61, 172, 2445, 239, true, true, false, false, 'unplugged', null, 61, -3.5]);
   assert.equal(routeRequests, beforeT03Routes + 1);
   assert.equal(regionReads, 2);
   t03 = 'numbered';
@@ -988,7 +1082,7 @@ try {
   assert.equal(routeRequests, beforeT03Routes + 1);
   assert.deepEqual(tab.errors, []);
   console.log('模拟零跑通过操作密码校验、驻车与授权限制、请求受理和车端回读。T03 具名字段与区域路由复用通过。');
-  console.log('仿真短信只登录一次。刷新时自动续期，重开标签恢复车况；共享权限可单项更新，切换演示保留真实会话，退出真实账号清除会话。');
+  console.log('刷新时自动续期，授权失效弹窗后可重新短信登录。重开标签恢复车况，切换演示保留真实会话，退出真实账号清除会话。');
 } finally {
   await tab.send('Storage.clearDataForOrigin', { origin, storageTypes: 'local_storage,indexeddb' }).catch(() => {});
   await tab.close();

@@ -3,6 +3,7 @@ import type { ReactNode } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { useSetting } from '../../data/preferences';
 import { failureFacts } from '../../data/serviceFailure';
+import { CarPictureOnly } from '../../data/cloud/LiveClient';
 import { startModelTrace, viewerDiagnosticStep } from '../../data/modelDiagnostics';
 import { asset, hasLocalCarAssets } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
@@ -12,11 +13,15 @@ import type { MarketSelection } from './MarketPicker';
 export type Face = 'front' | 'rear' | 'left' | 'right' | 'top';
 type Pattern = 'solid' | 'stripe' | 'gradient' | 'carbon' | 'image';
 export type Decoration = { kind: Pattern; color: string; image?: string; x: number; y: number; scale: number; rotation: number; opacity: number };
-type Wrap = Partial<Record<Face, Decoration>>;
+export type Wrap = Partial<Record<Face, Decoration>>;
 const emptyWrap: Wrap = {};
+const sampleTextures = new Map<string, string>();
 
 export function texture(face: Decoration) {
   if (face.image && face.kind === 'image') return face.image;
+  const key = face.kind === 'carbon' ? 'carbon' : face.kind + face.color;
+  const existing = sampleTextures.get(key);
+  if (existing) return existing;
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = 256;
   const ctx = canvas.getContext('2d')!;
@@ -39,7 +44,10 @@ export function texture(face: Decoration) {
       ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x + 256, 256); ctx.stroke();
     }
   }
-  return canvas.toDataURL('image/png');
+  const result = canvas.toDataURL('image/png');
+  if (sampleTextures.size >= 32) sampleTextures.delete(sampleTextures.keys().next().value!);
+  sampleTextures.set(key, result);
+  return result;
 }
 
 function useVisualPreferences() {
@@ -81,7 +89,8 @@ export function useVehicleVisual(paused = false, visible = true, diagnostic = fa
         throw error;
       }
     }, retry: false, staleTime: Infinity });
-  const photo = useQuery({ queryKey: ['cloud', 'car-picture', m.cloudKey], enabled: visible && mode === '2d' && !!m.client && !!m.vehicleId && !m.expired,
+  const autoPicture = !paused && !diagnostic && mode === '3d' && !cloud.data && cloud.error instanceof CarPictureOnly;
+  const photo = useQuery({ queryKey: ['cloud', 'car-picture', m.cloudKey], enabled: visible && (mode === '2d' || autoPicture) && !!m.client && !!m.vehicleId && !m.expired,
     queryFn: () => m.client!.getCarPicture(m.vehicleId), retry: false, staleTime: 600_000 });
   const localViewer = __LEAPMORE_LOCAL_3D__ && m.simulated && modelName === 'C10'
     ? import.meta.env.BASE_URL + 'car3d-demo/view.html?' + new URLSearchParams({
@@ -90,13 +99,13 @@ export function useVehicleVisual(paused = false, visible = true, diagnostic = fa
   const colors = cloud.data?.colors ?? [];
   const factoryPaint = colors.find(row => row.tsp === new URLSearchParams(cloud.data?.params).get('color'));
   const paint = !m.hasCustomPaint && factoryPaint ? factoryPaint : m.paint;
-  const fallback = hasLocalCarAssets && ['C10', 'B10'].includes(modelName) ? asset(modelName === 'B10' ? 'b10.png' : 'c10.png') : '';
+  const fallback = !autoPicture && hasLocalCarAssets && ['C10', 'B10'].includes(modelName) ? asset(modelName === 'B10' ? 'b10.png' : 'c10.png') : '';
   const officialImage = photo.data?.startsWith('https://') ? photo.data : '';
   const image = (mode === '2d' ? market?.image : undefined) || officialImage || fallback;
   const scene = background === 'auto' ? m.colorScheme === 'dark' ? 'night' : 'day' : background;
   return { mode, setMode, background, scene, colorScheme: m.colorScheme, setBackground, quality, setQuality, wrap, setWraps, market, modelName, queryKey,
     setMarket: (next: MarketSelection) => setMarketByVehicle(previous => ({ ...previous, [m.vehicleId]: next })),
-    paint, colors, image, fallback, cloud, visible,
+    paint, colors, image, fallback, cloud, visible, autoPicture, fetchingPhoto: photo.isFetching,
     paintOverride: m.hasCustomPaint || m.simulated ? m.paint.hex : '',
     viewer: mode === '3d' && !paused ? cloud.data?.url ?? localViewer : '' };
 }
@@ -202,8 +211,8 @@ function OrbitSurface({ home, send }: { home: boolean; send: (message: OrbitMess
     }} />;
 }
 
-export function VehicleModel({ visual, home = false, onStatus }: {
-  visual: ReturnType<typeof useVehicleVisual>; home?: boolean; onStatus?: (status: ModelStatus) => void;
+export function VehicleModel({ visual, home = false, editingWrap = false, onStatus }: {
+  visual: ReturnType<typeof useVehicleVisual>; home?: boolean; editingWrap?: boolean; onStatus?: (status: ModelStatus) => void;
 }) {
   const frame = useRef<HTMLIFrameElement>(null);
   const [phase, setPhase] = useState<'loading' | 'full' | 'unavailable'>('loading');
@@ -213,7 +222,10 @@ export function VehicleModel({ visual, home = false, onStatus }: {
   const cloudAsset = cloud.data;
   const trace = cloudAsset?.trace;
   const isolated = !!cloudAsset?.webId;
-  const status: ModelStatus = visual.mode === '2d' ? '2d' : viewer ? phase : cloud.isFetching ? 'loading' : 'unavailable';
+  const image = [visual.image, visual.fallback].find(url => url && !brokenImages.includes(url));
+  let status: ModelStatus = viewer ? phase : cloud.isFetching ? 'loading' : 'unavailable';
+  if (visual.mode === '2d') status = '2d';
+  else if (visual.autoPicture) status = image ? '2d' : visual.fetchingPhoto ? 'loading' : 'unavailable';
   const wrapPayload = useMemo(() => {
     if (!viewer || !visible) return 'null';
     const entries = Object.entries(wrap).filter((entry): entry is [Face, Decoration] => !!entry[1]);
@@ -225,14 +237,15 @@ export function VehicleModel({ visual, home = false, onStatus }: {
   latestAppearance.current = appearance;
   const latestVisibility = useRef(visible);
   latestVisibility.current = visible;
-  const latestSurface = useRef(home);
-  latestSurface.current = home;
+  const surface = home ? 'home' : editingWrap ? 'wrap' : 'appearance';
+  const latestSurface = useRef(surface);
+  latestSurface.current = surface;
   const sendPresentation = useCallback(() => {
     const target = frame.current?.contentWindow;
     const origin = isolated ? '*' : location.origin;
     if (target && latestVisibility.current) {
       const floor = getComputedStyle(document.documentElement).getPropertyValue('--bg').trim();
-      target.postMessage({ t: 'surface', view: latestSurface.current ? 'home' : 'appearance' }, origin);
+      target.postMessage({ t: 'surface', view: latestSurface.current }, origin);
       target.postMessage({ ...latestAppearance.current, floor }, origin);
     }
     target?.postMessage({ t: 'visibility', visible: latestVisibility.current }, origin);
@@ -270,8 +283,7 @@ export function VehicleModel({ visual, home = false, onStatus }: {
   }, [viewer, visible, phase, trace]);
   useEffect(() => {
     if (viewer) sendPresentation();
-  }, [viewer, appearance, colorScheme, visible, home, sendPresentation]);
-  const image = [visual.image, visual.fallback].find(url => url && !brokenImages.includes(url));
+  }, [viewer, appearance, colorScheme, visible, surface, sendPresentation]);
   let nativeUrl = viewer;
   if (!isolated && viewer) {
     const url = new URL(viewer, location.href);

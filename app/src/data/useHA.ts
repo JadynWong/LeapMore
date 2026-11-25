@@ -3,10 +3,12 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { currentEntities, invalidateHAWork, testConnection } from './ha/client';
 import { historyKey, syncHistory } from './ha/history';
 import { archivePointer, archiveVehicles, entityRegistry, syncArchive } from './ha/archive';
-import { ledgerKeys, readLedger, syncLedger } from './ha/ledger';
+import { haChargeSessions, haOlderChargeSessions, haTripHistory, ledgerKeys, readLedger, syncLedger } from './ha/ledger';
+import { periodStart, type RecordPeriod } from './recordPeriod';
+import { chargeWindowStart } from './tariff';
 import { candidateVehicles, discoverVehicles, normalizedVin, permittedFields, targetVin, vehicleByVin } from './ha/discovery';
 import { framesOf, numberOf } from './ha/measurements';
-import { HA_KEY, samplesOf } from './ha/schema';
+import { entityIdOf, HA_KEY, samplesOf } from './ha/schema';
 import { secureGet, secureRemove, secureSet } from '../platform/secure';
 import { NetworkError } from '../platform/network';
 import { deleteDataset, readDataset } from './localDatabase';
@@ -17,8 +19,11 @@ import type { History } from './ha/history';
 const emptyMapping: Mapping = {};
 const emptyRecords = { trips: [], charges: [] };
 interface Binding { vin: string; mapping: Mapping; archiveId: string }
-interface HATarget { vehicleId: string; cloudVin?: string; standalone: boolean; location: boolean; mileage: boolean; enabled: boolean; viewingRecords: boolean; suspended?: boolean }
-export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage, enabled, viewingRecords, suspended }: HATarget) {
+interface HATarget { vehicleId: string; cloudVin?: string; standalone: boolean; location: boolean; mileage: boolean; enabled: boolean; viewingRecords: boolean; viewingCharging: boolean; recordPeriod: RecordPeriod; recordTab: 'trips' | 'charges' | 'energy' | null; suspended?: boolean }
+function mergeHistory<T extends { id: string; startedAt: number }>(older: T[], recent: T[]) {
+  return [...new Map([...older, ...recent].map(row => [row.id, row])).values()].sort((a,b) => b.startedAt-a.startedAt);
+}
+export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage, enabled, viewingRecords, viewingCharging, recordPeriod, recordTab, suspended }: HATarget) {
   const qc = useQueryClient();
   const [config, setConfig] = useSetting<HAConfig | null>('haSettings', null);
   const [legacyArchiveIds] = useSetting<Record<string, string>>('archiveMapping', {});
@@ -40,7 +45,7 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
   const states = useQuery({
     queryKey: ['ha', 'states', config?.url],
     enabled: active, queryFn: ({ signal }) => currentEntities(config!, signal),
-    staleTime: 120_000, refetchInterval: liveInterval || (refreshInterval && !standalone && 120_000), retry,
+    staleTime: 120_000, refetchInterval: liveInterval || (viewingCharging && refreshInterval) || (refreshInterval && !standalone && 120_000), retry,
   });
   const registry = useQuery({
     queryKey: ['ha', 'entity-registry', url], enabled: active,
@@ -110,11 +115,49 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
 
   const frames = useMemo(() => framesOf(history.data?.entries ?? cachedHistory.data?.entries ?? [], mapping),
     [history.data, cachedHistory.data, mapping]);
-  const current = useMemo(() => framesOf(samplesOf(states.data ?? []).sort((a, b) => a.at - b.at), mapping).at(-1),
+  const currentFrames = useMemo(() => framesOf(samplesOf(states.data ?? []).sort((a, b) => a.at - b.at), mapping),
     [states.data, mapping]);
-  const records = ledger.data ?? cachedLedger.data ?? emptyRecords;
-  const trip = ledger.data?.tripsRead && !ledger.isError ? ledger.data.activeTrip : null;
+  const current = currentFrames.at(-1);
+  const batteryFrame = currentFrames.find(frame => frame.changed.includes('batteryMinTemp'));
+  const batteryMinTemp = numberOf(batteryFrame?.data.batteryMinTemp);
+  const batteryEntity = entityIdOf(mapping.batteryMinTemp);
+  const batteryHeating = states.data?.find(state => state.entity_id === batteryEntity)?.attributes?.battery_heating;
+  const batteryTemperature = batteryFrame && batteryMinTemp !== null && !states.isError
+    ? { celsius: batteryMinTemp, at: batteryFrame.at, source: 'ha' as const, heating: batteryHeating === true } : null;
+  const synced = ledger.data ?? cachedLedger.data ?? emptyRecords;
   const currentReading = states.isError ? undefined : current?.data;
+  const statsHistory = recordTab === 'energy' && numberOf(currentReading?.used) === null;
+  const from = statsHistory ? 0 : periodStart(recordPeriod);
+  const syncTripStart = chargeWindowStart(config?.days ?? 30);
+  const syncChargeStart = chargeWindowStart(Math.min(config?.days ?? 30, 30));
+  const moreTrips = recordsEnabled && (statsHistory || recordTab === 'trips' && (from < syncTripStart || synced.trips.length >= 500));
+  const historyTrips = useQuery({ queryKey: ['ha', 'trip-list', url, vin, from], enabled: moreTrips,
+    queryFn: ({ signal }) => haTripHistory(config!, vin, from, signal), retry: false, staleTime: 120_000 });
+  const showCharges = recordsEnabled && recordTab === 'charges';
+  const extendCharges = showCharges && from < syncChargeStart;
+  const recentCharges = useQuery({ queryKey: ['ha', 'cost-charges', url, vin], enabled: extendCharges,
+    queryFn: ({ signal }) => haChargeSessions(config!, vin, 31, signal), retry: false, staleTime: 120_000 });
+  const moreCharges = showCharges && from < chargeWindowStart(31);
+  const olderCharges = useQuery({ queryKey: ['ha', 'record-charge-archive', url, vin, from], enabled: moreCharges,
+    queryFn: ({ signal }) => haOlderChargeSessions(config!, vin, signal, from), retry: false, staleTime: 120_000 });
+  const records = useMemo(() => {
+    const haveSync = synced !== emptyRecords;
+    // 正常同步的窗口优先，扩展历史只补窗口以外的数据，防止已移除的记录重新出现。
+    const tripBoundary = synced.trips.length >= 500 ? Math.min(...synced.trips.map(row => row.startedAt)) : syncTripStart;
+    const earlierTrips = moreTrips && historyTrips.data?.filter(row => !haveSync || row.startedAt < tripBoundary);
+    const earlierCharges = extendCharges && recentCharges.data?.filter(row => !haveSync || row.startedAt < syncChargeStart);
+    const archive = moreCharges && olderCharges.data?.charges;
+    return { trips: earlierTrips ? mergeHistory(earlierTrips, synced.trips) : synced.trips,
+      charges: earlierCharges || archive ? mergeHistory([...(archive || []), ...(earlierCharges || [])], synced.charges) : synced.charges };
+  }, [synced, syncTripStart, syncChargeStart, moreTrips, extendCharges, moreCharges, historyTrips.data, recentCharges.data, olderCharges.data]);
+  const rangePartial = moreTrips && historyTrips.isError || extendCharges && recentCharges.isError ||
+    moreCharges && (olderCharges.isError || olderCharges.data && olderCharges.data.coverage !== 'complete');
+  const rangeLoading = moreTrips && historyTrips.isFetching || extendCharges && recentCharges.isFetching || moreCharges && olderCharges.isFetching;
+  const restoringRecords = !ready || active && (
+    !vin && (registry.isLoading || archives.isLoading || states.isLoading) ||
+    recordsEnabled && synced === emptyRecords && (ledger.isLoading || cachedLedger.isLoading)
+  );
+  const trip = ledger.data?.tripsRead && !ledger.isError ? ledger.data.activeTrip : null;
   const odometer = numberOf(currentReading?.odometer);
   const startOdometer = trip?.startOdometerKm ?? null;
   const activeTrip = trip && { speedKmh: numberOf(currentReading?.speed),
@@ -175,11 +218,14 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
   return {
     config, setConfig, ready, connected: active, hasToken, connect, disconnect, clearHistory, refresh, vin, candidates, fields,
     selectVehicle: (vin: string) => setSelectedCars(cars => ({ ...cars, [url]: vin })),
-    frames, records, activeTrip, activeCharge, recordSyncing, ledgerSyncing: ledger.isFetching, identifying, tripUnavailable, chargeUnavailable,
+    frames, records, currentReading, batteryTemperature, batteryEntity,
+    rangePartial, rangeLoading, activeTrip, activeCharge, recordSyncing, ledgerSyncing: ledger.isFetching, identifying, tripUnavailable, chargeUnavailable,
+    restoringTrips: restoringRecords || moreTrips && historyTrips.isLoading,
+    restoringCharges: restoringRecords || extendCharges && recentCharges.isLoading || moreCharges && olderCharges.isLoading,
     registryUnavailable: registry.isError || registry.data?.registryReadable === false,
     archiveUnavailable: archives.isError || archive.isError, historyUnavailable: history.isError,
     lastSync, syncing: states.isFetching || identifying || ledger.isFetching,
     error: error instanceof Error ? error.message : '',
-    expired: error instanceof NetworkError && [401, 403].includes(error.status),
+    expired: error instanceof NetworkError && error.status === 401,
   };
 }

@@ -18,6 +18,7 @@ import com.getcapacitor.PluginCall;
 import com.getcapacitor.PluginMethod;
 import com.getcapacitor.annotation.ActivityCallback;
 import com.getcapacitor.annotation.CapacitorPlugin;
+import java.io.InputStream;
 import java.io.OutputStream;
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
@@ -136,16 +137,25 @@ public class LeapSettingsPlugin extends Plugin {
             call.reject("CSV 文件无效");
             return;
         }
+        chooseDocument(call, name, "text/csv");
+    }
+
+    @PluginMethod
+    public void saveRewardImage(PluginCall call) {
+        chooseDocument(call, "LeapMore-微信赞赏码.png", "image/png");
+    }
+
+    private void chooseDocument(PluginCall call, String name, String mimeType) {
         Intent intent = new Intent(Intent.ACTION_CREATE_DOCUMENT);
-        intent.setType("text/csv");
+        intent.setType(mimeType);
         intent.addCategory(Intent.CATEGORY_OPENABLE);
         intent.putExtra(Intent.EXTRA_TITLE, name);
-        try { startActivityForResult(call, intent, "writeCsv"); }
+        try { startActivityForResult(call, intent, "writeDocument"); }
         catch (RuntimeException ignored) { call.reject("无法打开系统保存窗口"); }
     }
 
     @ActivityCallback
-    private void writeCsv(PluginCall call, ActivityResult result) {
+    private void writeDocument(PluginCall call, ActivityResult result) {
         if (call == null) return;
         Uri target = result.getData() == null ? null : result.getData().getData();
         if (result.getResultCode() != Activity.RESULT_OK || target == null) {
@@ -154,8 +164,16 @@ public class LeapSettingsPlugin extends Plugin {
         }
         try (OutputStream output = getContext().getContentResolver().openOutputStream(target, "w")) {
             if (output == null) throw new IllegalStateException("Missing output stream");
-            output.write(call.getString("text", "").getBytes(StandardCharsets.UTF_8));
-        } catch (Exception ignored) { call.reject("无法写入 CSV"); return; }
+            if ("saveRewardImage".equals(call.getMethodName())) {
+                try (InputStream input = getContext().getAssets().open("public/assets/wechat-reward-qr.png")) {
+                    byte[] buffer = new byte[8192];
+                    int count;
+                    while ((count = input.read(buffer)) != -1) output.write(buffer, 0, count);
+                }
+            } else {
+                output.write(call.getString("text", "").getBytes(StandardCharsets.UTF_8));
+            }
+        } catch (Exception ignored) { call.reject("无法写入文件"); return; }
         call.resolve(new JSObject().put("saved", true));
     }
 

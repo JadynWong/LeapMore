@@ -1,5 +1,5 @@
 import { CapacitorPlugin, PluginCall } from 'harmony-capacitor';
-import { bundleManager, common } from '@kit.AbilityKit';
+import { bundleManager, common, ConfigurationConstant } from '@kit.AbilityKit';
 import { util, url } from '@kit.ArkTS';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { asset } from '@kit.AssetStoreKit';
@@ -27,11 +27,17 @@ export class LeapSettings extends CapacitorPlugin {
       call.resolve(facts);
     });
     this.registerMethod('saveCsv', call => { this.saveCsv(call); });
+    this.registerMethod('saveRewardImage', call => {
+      this.saveDocument(call, 'LeapMore-微信赞赏码.png', () =>
+        this.context.resourceManager.getRawFileContentSync('www/assets/wechat-reward-qr.png'));
+    });
     this.registerMethod('openAmap', call => { this.openAmap(call); });
     this.registerMethod('openRelease', call => {
       const address = call.getString('url');
       const isReleaseSite = /^https:\/\/(github\.com|gitcode\.com)\//.test(address);
-      if (!isReleaseSite && address !== 'https://leapmore.mirato66.cloud/' && address !== 'https://pan.quark.cn/s/9e6168a73f21') {
+      if (!isReleaseSite && address !== 'https://leapmore.mirato66.cloud/' && address !== 'https://pan.quark.cn/s/9e6168a73f21' &&
+          address !== 'https://afdian.com/a/mirato' && address !== 'https://lbs.amap.com/' &&
+          address !== 'https://console.amap.com/dev/key/app') {
         reject(call, '无效外部链接'); return;
       }
       this.context.startAbility({ action: 'ohos.want.action.viewData', uri: address, entities: ['entity.system.browsable'] })
@@ -82,19 +88,23 @@ export class LeapSettings extends CapacitorPlugin {
   private async saveCsv(call: PluginCall): Promise<void> {
     const name = call.getString('name');
     if (!/^[a-zA-Z0-9_-]+\.csv$/.test(name)) { reject(call, 'CSV 文件无效'); return; }
+    await this.saveDocument(call, name, () => utf8.encodeInto(call.getString('text')));
+  }
+
+  private async saveDocument(call: PluginCall, name: string, contents: () => Uint8Array): Promise<void> {
     try {
       const options = new picker.DocumentSaveOptions();
       options.newFileNames = [name];
       const targets = await new picker.DocumentViewPicker(this.context).save(options);
       if (targets.length > 0) {
-        const bytes = utf8.encodeInto(call.getString('text'));
+        const bytes = contents();
         const file = fileIo.openSync(targets[0], fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
         try { fileIo.writeSync(file.fd, bytes.buffer, { length: bytes.byteLength }); }
         finally { fileIo.closeSync(file); }
       }
       const result: SaveResult = { saved: targets.length > 0 };
       call.resolve(result);
-    } catch { reject(call, '无法保存 CSV'); }
+    } catch { reject(call, '无法保存文件'); }
   }
 }
 
@@ -336,11 +346,12 @@ export class LeapNet extends CapacitorPlugin {
 }
 
 export interface VehicleSummary {
-  range?: string; soc?: string; fuel?: string; charging?: string;
+  range?: string; rangeLabel?: string; soc?: string; fuel?: string; charging?: string; chargeStatus?: string;
+  colorScheme?: string; climateOn?: boolean; trunkOpen?: boolean;
   state?: string; power?: string; locked?: string; inside?: string; odometer?: string;
-  lockAction?: string; simulated?: boolean; canLock?: boolean; canControl?: boolean;
+  lockAction?: string; simulated?: boolean; canLock?: boolean; canControl?: boolean; canTrunk?: boolean; canFind?: boolean;
 }
-interface CardData extends VehicleSummary { dimension: number; }
+interface CardData extends VehicleSummary { dimension: number; stale: boolean; }
 interface WidgetAction { action?: string; }
 let pendingWidget: string | undefined;
 export function acceptWidgetAction(action: string): void {
@@ -349,17 +360,23 @@ export function acceptWidgetAction(action: string): void {
 export function widgetPrefs(context: common.Context): preferences.Preferences {
   return preferences.getPreferencesSync(context, { name: 'leapmore_widget' });
 }
-export function widgetData(prefs: preferences.Preferences, dimension: number): formBindingData.FormBindingData {
+export function widgetData(prefs: preferences.Preferences, dimension: number, systemMode?: ConfigurationConstant.ColorMode): formBindingData.FormBindingData {
   const value = JSON.parse(prefs.getSync('summary', '{}') as string) as VehicleSummary;
   const updated = prefs.getSync('updated', 0) as number;
   const stale = Date.now() - updated > 900_000;
   const data: CardData = {
     dimension: dimension,
+    stale: stale,
     range: value.range ?? '— km',
+    rangeLabel: value.rangeLabel ?? '续航',
+    colorScheme: value.colorScheme ?? (systemMode === ConfigurationConstant.ColorMode.COLOR_MODE_DARK ? 'dark' : 'light'),
+    climateOn: value.climateOn === true,
+    trunkOpen: value.trunkOpen === true,
     soc: value.soc ?? '—',
     fuel: value.fuel ?? '',
     charging: value.charging ?? '状态未知',
-    state: stale && updated ? '缓存车况' : value.state ?? '打开应用查看',
+    chargeStatus: value.chargeStatus ?? '',
+    state: !updated ? '待同步' : stale ? '缓存车况' : value.state ?? '状态未知',
     power: value.power ?? '',
     locked: value.locked ?? '—',
     inside: value.inside ?? '—',
@@ -367,6 +384,8 @@ export function widgetData(prefs: preferences.Preferences, dimension: number): f
     lockAction: value.lockAction ?? '解锁',
     canLock: !stale && value.canLock === true,
     canControl: !stale && value.canControl === true,
+    canTrunk: !stale && (value.canTrunk ?? value.canControl) === true,
+    canFind: !stale && (value.canFind ?? value.canControl) === true,
   };
   return formBindingData.createFormBindingData(data);
 }
@@ -391,7 +410,7 @@ export class LeapWidget extends CapacitorPlugin {
       await prefs.flush();
       const catalog = prefs.getAllSync();
       for (const key of Object.keys(catalog)) if (key.startsWith('widget-')) {
-        await formProvider.updateForm(key.substring(7), widgetData(prefs, prefs.getSync(key, 2) as number)).catch(() => {});
+        await formProvider.updateForm(key.substring(7), widgetData(prefs, prefs.getSync(key, 2) as number, this.context.config.colorMode)).catch(() => {});
       }
       call.resolve();
     } catch { reject(call, '桌面卡片更新失败'); }

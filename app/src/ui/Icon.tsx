@@ -1,6 +1,10 @@
 const tailgateSide = '<path d="M2 16v-2a2 2 0 0 1 1.4-1.9L6.5 11l2.3-3.3A2 2 0 0 1 10.5 7h5.8M2 16h2.5m3.8 0h7.4m3.8 0H22v-2.5M6.5 11h8.2"/><circle cx="6.4" cy="16.1" r="1.9"/><circle cx="17.6" cy="16.1" r="1.9"/>';
 const sideWindowFrame = '<path d="M4 14 9.5 6h9a1.5 1.5 0 0 1 1.5 1.5v9a1.5 1.5 0 0 1-1.5 1.5h-13A1.5 1.5 0 0 1 4 16.5V14Z"/>';
 const icons = {
+    thermometer: '<path d="M9 14.5V6a3 3 0 0 1 6 0v8.5a5 5 0 1 1-6 0Z"/><path d="M12 8v9"/><circle cx="12" cy="18" r="1.3" fill="currentColor"/>',
+    calendar: '<rect x="3.5" y="5" width="17" height="16" rx="3"/><path d="M7.5 3v4m9-4v4m-13 3.5h17m-13 4H10m3.5 0H16"/>',
+    trophy: '<path d="M7 4h10v5a5 5 0 0 1-10 0V4Zm0 2H3v2a4 4 0 0 0 4.7 4M17 6h4v2a4 4 0 0 1-4.7 4M12 14v5m-4 1h8"/>',
+    wallet: '<rect x="3" y="5" width="18" height="15" rx="3"/><path d="M21 10h-5a2.5 2.5 0 0 0 0 5h5"/><circle cx="16.5" cy="12.5" r=".6" fill="currentColor"/>',
     edit: '<path d="m14 6 4 4M4 20l4.5-.8L20 7.7 16.3 4 4.8 15.5 4 20Z"/>',
     power: '<path d="M12 3v9m-5.4-5.4a8 8 0 1 0 10.8 0"/>',
     lock: '<rect x="5" y="11" width="14" height="9.5" rx="2.5"/><path d="M8 11V8a4 4 0 0 1 8 0v3"/>',

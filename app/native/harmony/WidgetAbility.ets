@@ -11,11 +11,11 @@ export default class WidgetAbility extends FormExtensionAbility {
       prefs.putSync('widget-' + id, dimension);
       prefs.flush().catch(() => {});
     }
-    return widgetData(prefs, dimension);
+    return widgetData(prefs, dimension, this.context.config.colorMode);
   }
   onUpdateForm(formId: string): void {
     const prefs = widgetPrefs(this.context);
-    formProvider.updateForm(formId, widgetData(prefs, prefs.getSync('widget-' + formId, 2) as number)).catch(() => {});
+    formProvider.updateForm(formId, widgetData(prefs, prefs.getSync('widget-' + formId, 2) as number, this.context.config.colorMode)).catch(() => {});
   }
   onRemoveForm(formId: string): void {
     const prefs = widgetPrefs(this.context);

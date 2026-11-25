@@ -17,7 +17,8 @@ def add_source(group, target, path)
   target.source_build_phase.add_file_reference(file, true)
 end
 
-%w[LeapPlugins.swift VehicleActionIntent.swift].each do |name|
+shared_widget_sources = %w[VehicleActionIntent.swift LeapWidgetStorage.swift]
+(['LeapPlugins.swift'] + shared_widget_sources).each do |name|
   FileUtils.cp(File.join(native, name), File.join(project_root, 'App'))
   add_source(app_group, main, name)
 end
@@ -47,7 +48,8 @@ Xcodeproj::Plist.write_to_path(groups, File.join(project_root, 'App', 'LeapMore.
 
 widget_folder = File.join(project_root, 'LeapWidget')
 FileUtils.mkdir_p(widget_folder)
-%w[LeapWidget.swift VehicleActionIntent.swift].each { |name| FileUtils.cp(File.join(native, name), widget_folder) }
+widget_sources = ['LeapWidget.swift'] + shared_widget_sources
+widget_sources.each { |name| FileUtils.cp(File.join(native, name), widget_folder) }
 Xcodeproj::Plist.write_to_path(groups, File.join(widget_folder, 'LeapWidget.entitlements'))
 Xcodeproj::Plist.write_to_path({
   'CFBundleDisplayName' => 'LeapMore 车辆',
@@ -69,7 +71,9 @@ unless widget
   embedded = phase.add_file_reference(widget.product_reference)
   embedded.settings = { 'ATTRIBUTES' => ['RemoveHeadersOnCopy', 'CodeSignOnCopy'] }
 end
-%w[LeapWidget.swift VehicleActionIntent.swift].each { |name| add_source(widget_group, widget, name) }
+widget_sources.each { |name| add_source(widget_group, widget, name) }
+catalog = widget_group.files.find { |file| file.path == 'WidgetAssets.xcassets' } || widget_group.new_file('WidgetAssets.xcassets')
+widget.resources_build_phase.add_file_reference(catalog, true)
 [main, widget].each do |target|
   target.build_configurations.each do |config|
     settings = config.build_settings

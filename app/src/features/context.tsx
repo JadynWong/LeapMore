@@ -4,8 +4,10 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useLocation } from 'react-router-dom';
 import { demoEnergy, demoLocation, demoRecords, demoTires, demoVehicles, haVehicle } from '../data/demo';
 import { dailyEnergy } from '../data/ha/measurements';
+import { periodTitles, type RecordPeriod } from '../data/recordPeriod';
 import { isVehicleVin, normalizedVin } from '../data/ha/discovery';
 import { combineCharges, combineTrips } from '../data/combinedRecords';
+import { useChargeFees } from './records/useChargeFees';
 import { allGrants, defaultRecordSource, defaultTariff, sourceUsesHA, sourceUsesPhone, themeAccents, themeModes, useSetting } from '../data/preferences';
 import type { Favorite, Grant, Source, ThemeAccent, ThemeMode } from '../data/preferences';
 import { CloudSessionExpired } from '../data/cloud/LiveClient';
@@ -48,7 +50,12 @@ function useDeletedTrips(scope: string) {
 }
 
 function useModel(widgetControl: boolean) {
-  const viewingRecords = useLocation().pathname === '/records';
+  const route = useLocation();
+  const viewingRecords = route.pathname === '/records';
+  const [storedPeriod, setRecordPeriod] = useSetting<RecordPeriod>('recordPeriod', 'month');
+  const recordPeriod = Object.hasOwn(periodTitles, storedPeriod) ? storedPeriod : 'month';
+  const recordTab = viewingRecords ? (new URLSearchParams(route.search).get('tab') === 'charges' ? 'charges' : 'trips')
+    : route.pathname.startsWith('/charges/') ? 'charges' : route.pathname.startsWith('/trips/') ? 'trips' : route.pathname === '/energy' ? 'energy' : null;
   const qc = useQueryClient();
   const [mode, setMode] = useSetting<Mode | null>('mode', null);
   const [cloud, setCloud] = useState<LiveVehicles | null>(null);
@@ -128,7 +135,7 @@ function useModel(widgetControl: boolean) {
   const recordCloud = !widgetControl && !!client && !!cloudKey && usesPhone && grants.mileage && !expired;
   const vehiclePolling = useMemo(() => new VehiclePolling(), [cloudKey]);
   const ha = useHA({ vehicleId: currentId || haVehicle.id, cloudVin: mode === 'cloud' ? vehicle?.vin : undefined,
-    standalone: mode === 'ha', enabled: !!currentId && usesHA, viewingRecords, suspended: widgetControl,
+    standalone: mode === 'ha', enabled: !!currentId && usesHA, viewingRecords, viewingCharging: route.pathname === '/charging', recordTab, recordPeriod, suspended: widgetControl,
     location: !expired && !!vehicle && grants.location, mileage: !expired && !!vehicle && grants.mileage });
   async function readCloudState(signal: AbortSignal) {
     const session = cloud!;
@@ -259,6 +266,11 @@ function useModel(widgetControl: boolean) {
   const powertrain = simulated ? debug.powertrain : powertrainInfo.type;
   const ranges = liveState?.rangeReadings;
   const range = displayedRange(powertrain, ranges);
+  const haTemperature = usesHA || mode === 'ha' ? ha.batteryTemperature : null;
+  const cloudTemperature = liveState?.batteryMinTempC == null ? null :
+    { celsius: liveState.batteryMinTempC, at: vehicleReport, source: 'cloud' as const, heating: liveState.batteryHeating === true };
+  const batteryTemperature = cloudTemperature && (!haTemperature || (cloudTemperature.at ?? 0) >= haTemperature.at)
+    ? cloudTemperature : haTemperature;
   const current = {
     soc,
     powertrain,
@@ -273,6 +285,7 @@ function useModel(widgetControl: boolean) {
     windowPercent: liveState?.windowPercent,
     sunshadeOpen: liveState?.sunshadeOpen ?? null,
     inside: simulated ? 24 : liveState?.insideTempC ?? null,
+    batteryTemperature: simulated ? { celsius: 23, at: undefined, source: 'demo' as const, heating: false } : batteryTemperature,
     charging: simulated ? debug.charging : liveState?.charging ?? 'unknown',
     power: simulated && debug.charging === 'charging' ? 6.3 : liveState?.chargingPowerKw ?? null,
     healthCharging: liveState?.healthCharging ?? null,
@@ -310,12 +323,15 @@ function useModel(widgetControl: boolean) {
   const tripScope = hybrid ? JSON.stringify([phoneTripScope, haTripScope]) : phoneTripScope || haTripScope;
   const tripVin = normalizedVin(mode === 'ha' ? ha.vin : mode === 'cloud' ? vehicle?.vin : undefined);
   // A local removal applies to this vehicle across data sources. Keep reading marks from earlier versions.
-  const deletionScope = !phoneTripScope && !haTripScope ? '' :
+  const recordVehicleScope = !phoneTripScope && !haTripScope ? '' :
     isVehicleVin(tripVin) ? JSON.stringify(['vin', tripVin]) : phoneTripScope || haTripScope;
-  const removedLocal = useDeletedTrips(deletionScope);
-  const removedPhone = useDeletedTrips(phoneTripScope === deletionScope ? '' : phoneTripScope);
-  const removedHA = useDeletedTrips(haTripScope === deletionScope ? '' : haTripScope);
+  const chargeFees = useChargeFees(recordVehicleScope, combinedCharges?.aliases);
+  const removedLocal = useDeletedTrips(recordVehicleScope);
+  const removedPhone = useDeletedTrips(phoneTripScope === recordVehicleScope ? '' : phoneTripScope);
+  const removedHA = useDeletedTrips(haTripScope === recordVehicleScope ? '' : haTripScope);
   const restoringDeletions = removedLocal.isLoading || removedPhone.isLoading || removedHA.isLoading;
+  const tripsLoading = restoringDeletions || cloudRecords.restoringFrames || usesHA && ha.restoringTrips;
+  const chargesLoading = cloudRecords.restoringFrames || cloudRecords.loading || usesHA && ha.restoringCharges;
   const records = useMemo(() => {
     if (restoringDeletions) return { ...rawRecords, trips: [] };
     if (!removedLocal.data?.length && !removedPhone.data?.length && !removedHA.data?.length) return rawRecords;
@@ -323,14 +339,14 @@ function useModel(widgetControl: boolean) {
     return { ...rawRecords, trips: rawRecords.trips.filter(trip => !removed.has(trip.id) &&
       !combinedTrips?.aliases.get(trip.id)?.some(id => removed.has(id))) };
   }, [removedLocal.data, removedPhone.data, removedHA.data, restoringDeletions, rawRecords, combinedTrips]);
-  const canDeleteTrip = (id: string) => !!deletionScope &&
+  const canDeleteTrip = (id: string) => !!recordVehicleScope &&
     id !== cloudRecords.activeTrip?.id && !combinedTrips?.aliases.get(id)?.includes(cloudRecords.activeTrip?.id ?? '');
   async function deleteTrip(id: string) {
     if (!canDeleteTrip(id) || !records.trips.some(trip => trip.id === id)) throw new Error('这段行程暂时无法删除。');
     const ids = [id, ...(combinedTrips?.aliases.get(id) ?? [])];
-    const queryKey = ['deleted-trips', deletionScope];
+    const queryKey = ['deleted-trips', recordVehicleScope];
     await qc.cancelQueries({ queryKey, exact: true });
-    const saved = await updateDataset<string[]>('deleted-trips:' + deletionScope, prior => [...new Set([...(prior ?? []), ...ids])]);
+    const saved = await updateDataset<string[]>('deleted-trips:' + recordVehicleScope, prior => [...new Set([...(prior ?? []), ...ids])]);
     qc.setQueryData(queryKey, saved);
   }
   const favorites = favoriteSets[currentId] ?? (simulated ? [
@@ -412,11 +428,12 @@ function useModel(widgetControl: boolean) {
         setVehicleEnergySettings(values => ({ ...values, [energyScope]: settings }));
       }
     },
-    demo: mode === 'demo', simulated, debug, setDebug, expired, canSee, grants, scenario, current, records, tripScope, canDeleteTrip, deleteTrip, ha, background, client, cloudKey, cloudRecords, operationScope,
+    demo: mode === 'demo', simulated, debug, setDebug, expired, canSee, grants, scenario, current, records, tripsLoading, chargesLoading, tripScope, canDeleteTrip, deleteTrip, ha, background, client, cloudKey, cloudRecords, operationScope,
+    chargeFees,
     findTrip: (id?: string) => records.trips.find(row => row.id === id || !!id && combinedTrips?.aliases.get(row.id)?.includes(id)),
     findCharge: (id?: string) => records.charges.find(row => row.id === id || !!id &&
       (row.sampledId === id || combinedCharges?.aliases.get(row.id)?.includes(id))),
-    favorites, paint, hasCustomPaint: !!paintSets[currentId], toast, setToast, refresh, refreshing: cloudState.isFetching,
+    recordPeriod, setRecordPeriod, favorites, paint, hasCustomPaint: !!paintSets[currentId], toast, setToast, refresh, refreshing: cloudState.isFetching,
     stateFailure: cloudState.isError ? failureLabels[failureFacts(cloudState.error).kind] : '',
     cloudDiagnostics: {
       listStatus: cloudVehicles.status, listLastSuccess: cloudVehicles.dataUpdatedAt, listFailure: () => readFailure(profileScope, 'list'),

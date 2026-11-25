@@ -90,4 +90,11 @@ test('current version downloads use the published filenames for all three platfo
       'https://github.com/MiRaToo/LeapMore/releases/download/v0.1.1/LeapMore-v0.1.1-' + file);
   }
   assert.equal(installedPackageUrl('0.1.1', 'android', 'other/repository'), undefined);
+  const unified = installedPackageUrl('0.1.2', 'ios', githubRepository);
+  assert.match(unified!, /\/v0\.1\.2\/LeapMore-v0\.1\.2-ios\.ipa$/);
+  const item = release('v0.1.2', { assets: [
+    { name: 'older-unsigned.ipa' },
+    { name: 'LeapMore-v0.1.2-ios.ipa', browser_download_url: unified },
+  ] });
+  assert.equal(latestRelease([item], 'github', githubRepository, 'ios')?.downloadUrl, unified);
 });

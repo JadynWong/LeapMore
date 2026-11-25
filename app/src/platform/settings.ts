@@ -25,6 +25,7 @@ export const nativeSettings = registerPlugin<{
   }>;
   checkBackground(): Promise<AndroidBackgroundCheck>;
   openAmap(options: { app: string; web: string }): Promise<void>;
+  saveRewardImage(): Promise<{ saved: boolean }>;
   saveCsv(options: { name: string; text: string }): Promise<{ saved: boolean }>;
 }>('LeapSettings');
 

@@ -3,6 +3,7 @@ import { usePlotScrub } from './usePlotScrub';
 import { kmBetween } from '../../data/ha/measurements';
 import type { MetricSample, TrackSample, Trip } from '../../data/ha/measurements';
 import { clock, value } from '../../ui/components';
+import { Icon } from '../../ui/Icon';
 
 const timeWithSeconds = new Intl.DateTimeFormat('zh-CN', { hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23' });
 const plot = { width: 340, left: 36, right: 304, top: 13, bottom: 100 };
@@ -95,7 +96,7 @@ export function Timeline({ title, unit, samples, selectedAt, onSelect, extra, ma
   }
   const scrub = usePlotScrub(pickAt);
   return <div className="card chart-card">
-    <div className="chart-head"><h3>{title}</h3><span>{[unit, graph.hasSoc && 'SOC %'].filter(Boolean).join(' · ')}</span></div>
+    <div className="chart-head"><h3 className="metric-label"><Icon name={unit === 'kW' ? 'bolt' : 'gauge'} size={15} />{title}</h3><span>{[unit, graph.hasSoc && 'SOC %'].filter(Boolean).join(' · ')}</span></div>
     {!samples.length ? <p className="tiny muted">当前来源缺少采样。</p> : <>
       <div className="sample-timeline" role="slider" tabIndex={0} aria-label={title + '时间轴'}
         aria-valuemin={1} aria-valuemax={samples.length} aria-valuenow={Math.max(1, index + 1)}

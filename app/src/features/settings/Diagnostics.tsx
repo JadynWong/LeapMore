@@ -7,7 +7,8 @@ import { useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
 import { diagnosticCsv, diagnosticFamily, diagnosticRuns, diagnosticSteps, diagnosticYear, modelFinding, subscribeDiagnostics } from '../../data/modelDiagnostics';
 import { saveRecordsCsv } from '../../platform/settings';
-import { Hint, Section, stamp } from '../../ui/components';
+import { Section, stamp } from '../../ui/components';
+import { Icon, type IconName } from '../../ui/Icon';
 import { useVehicleVisual, VehicleModel } from '../appearance/VehicleModel';
 import { useModelContext } from '../context';
 
@@ -23,6 +24,10 @@ function DiagnosticViewer() {
   return <div className="diagnostic-preview"><VehicleModel visual={visual} /></div>;
 }
 
+function DiagnosticHeading({ icon, title }: { icon: IconName; title: string }) {
+  return <h2 className="diagnostic-heading"><span><Icon name={icon} size={19} /></span>{title}</h2>;
+}
+
 type NetworkReport = { at: string; environment: Record<string, string>; checks: Record<CheckName, CheckResult> };
 const iso = (at: number | undefined) => at ? new Date(at).toISOString() : 'unknown';
 
@@ -36,12 +41,14 @@ export function Diagnostics() {
   const storageKey = 'networkDiagnostic.' + md5(JSON.stringify([m.profileScope, m.cloudKey]));
   const [networkReport, setNetworkReport] = useState(() => readSetting<NetworkReport | null>(storageKey, null));
   const [testing, setTesting] = useState(false);
+  const [networkError, setNetworkError] = useState('');
+  const [showResults, setShowResults] = useState(false);
   const canCheck = !!m.client && !!m.vehicle && !m.expired;
   const checking = canCheck && search.get('check') === '3d';
   async function checkNetwork() {
     if (testing) return;
     setTesting(true);
-    setNotice('');
+    setNetworkError('');
     const at = new Date().toISOString();
     const skip = (result: string): CheckResult => ({ result, at, durationMs: 0 });
     const reason = m.mode !== 'cloud' ? '跳过 · 未使用零跑账号登录' : m.expired ? '跳过 · 会话失效' : !m.client ? '跳过 · 账号未就绪' : '';
@@ -53,8 +60,9 @@ export function Diagnostics() {
       ]);
       const report = { at, environment, checks: { account, listHost, carHost, list, state } };
       setNetworkReport(report);
+      setShowResults(true);
       try { saveSetting(storageKey, report); } catch { /* Keep the report exportable in memory. */ }
-    } catch { setNotice('检测中断，可重试或导出已有记录。'); }
+    } catch { setNetworkError('检测中断，可重试或导出已有记录。'); }
     finally { setTesting(false); }
   }
   async function start() {
@@ -96,40 +104,55 @@ export function Diagnostics() {
     } catch { setNotice('无法保存诊断报告，请重新选择保存位置。'); }
     finally { setSaving(false); }
   }
-  const explanation = m.expired ? '会话已失效。仍可导出已有记录，重新登录后可检测车模。' :
-    m.mode === 'ha' ? '当前使用 HA 登录。检测零跑云车模需要登录零跑账号并选车。' :
-    m.mode === 'demo' ? '演示模式使用样例数据。登录零跑账号并选车后可检测本车。' :
-    '请选择一辆已授权车辆。';
-  return <><Section title="网络与车辆诊断">
-    <p className="small">检测账号服务、车辆列表和车况服务的连接。登录零跑账号后，还会实际读取授权车辆列表和所选车辆的车况。</p>
-    <button className="btn secondary sm" disabled={testing} onClick={() => void checkNetwork()}>{testing ? '正在检测网络与车辆…' : '检测网络与车辆'}</button>
-    {networkReport && <div aria-live="polite"><p className="small">上次检测 · {stamp(Date.parse(networkReport.at))}</p>
-      <p className="tiny muted">{networkReport.environment.os} · LeapMore {networkReport.environment.version}
-        {networkReport.environment.webViewVersion && ' · WebView ' + networkReport.environment.webViewVersion}</p>
-      {(Object.keys(checkNames) as CheckName[]).map(key => <p key={key} className="small">{checkNames[key]} · {networkReport.checks[key].result}
-        {networkReport.checks[key].httpStatus && '（HTTP ' + networkReport.checks[key].httpStatus + '）'}</p>)}
-      <p className="tiny muted">连接检测仅确认服务是否返回 HTTP 响应。授权和车况结果分别列在最后两项。</p>
-    </div>}
-  </Section>{m.mode === 'cloud' && m.vehicle && <Section title="动力类型与续航诊断">
-    <p className="small">当前按{m.powertrainInfo.type === 'reev' ? '增程' : '纯电'}显示。{powertrainReasons[m.powertrainInfo.reason]}。</p>
-    <p className="small">{rangeSources[m.rangeSource]}{m.current.range !== null && ' · ' + m.current.range + ' km'}</p>
-    <Link className="link" to="/vehicle-manage">管理本车动力类型</Link>
-  </Section>}<Section title="3D 车模诊断">
-    {checking && <DiagnosticViewer />}
-    <p className="small" role="status">{runs[0] ? modelFinding(runs[0]) : '尚无本车的加载记录。'}</p>
-    {runs.map(run => <details key={run.id} className="diagnostic-run">
-      <summary>{stamp(run.at)} · {modelFinding(run)}</summary>
-      <ol>{run.events.map((event, index) => <li key={index}>
-        <span>{diagnosticSteps[event.step]}</span> <small>+{((event.at - run.at) / 1000).toFixed(1)} 秒</small>
-        {event.facts?.modelType !== undefined && <small> · modelType {event.facts.modelType}</small>}
-        {event.facts?.format && <small> · {event.facts.format.toUpperCase()} · {event.facts.bytes} 字节</small>}
-        {event.facts?.c01Compat && <small> · 已应用 C01 兼容修复</small>}
-      </li>)}</ol>
-    </details>)}
-    {canCheck ? checking ? <Link className="btn secondary sm" to="/states" replace>结束检测</Link> :
-      <button className="btn secondary sm" onClick={() => void start()}>检测本车 3D 车模</button> : <Hint>{explanation}</Hint>}
-    <p className="tiny muted">报告包含系统、应用和浏览器内核版本、网络检测结果、车辆读取记录及最近三次车模加载过程。账号、车架号、位置、Wi-Fi 名称和素材密钥均已排除。</p>
-    <button className="btn accent" disabled={saving || testing} onClick={() => void save()}>{saving ? '正在导出…' : '导出诊断报告（CSV）'}</button>
-    {notice && <p role="status" className="small">{notice}</p>}
-  </Section></>;
+  const explanation = m.expired ? '重新登录后可检测本车车模。' :
+    m.mode === 'cloud' ? '选择已授权车辆后可检测本车车模。' : '登录零跑账号并选车后可检测本车车模。';
+  return <>
+    <Section className="diagnostic-card">
+      <DiagnosticHeading icon="wifi" title="网络与车辆诊断" />
+      <p>检查零跑服务连接。登录后可同时检测车辆授权和车况读取。</p>
+      <button className="btn accent sm" disabled={testing} onClick={() => void checkNetwork()}>{testing ? '正在检测网络与车辆…' : '检测网络与车辆'}</button>
+      {networkError && <p role="status">{networkError}</p>}
+      {networkReport && <details className="diagnostic-results" open={showResults} onToggle={e => setShowResults(e.currentTarget.open)}>
+        <summary>检测结果<time dateTime={networkReport.at}>{stamp(Date.parse(networkReport.at))}</time><Icon name="chevrond" size={15} /></summary>
+        <dl>{(Object.keys(checkNames) as CheckName[]).map(key => <div key={key}>
+          <dt>{checkNames[key]}</dt><dd>{networkReport.checks[key].result}
+            {networkReport.checks[key].httpStatus && '（HTTP ' + networkReport.checks[key].httpStatus + '）'}</dd>
+        </div>)}</dl>
+        <p className="tiny muted">{networkReport.environment.os} · LeapMore {networkReport.environment.version}
+          {networkReport.environment.webViewVersion && ' · WebView ' + networkReport.environment.webViewVersion}</p>
+      </details>}
+    </Section>
+    <Section className="diagnostic-card">
+      <DiagnosticHeading icon="car" title="3D 车模诊断" />
+      {checking && <DiagnosticViewer />}
+      {canCheck && !runs.length && <p>检测本车素材获取和模型加载过程。</p>}
+      {!canCheck && <p>{explanation}</p>}
+      {canCheck && (checking ? <Link className="btn ghost sm" to="/states" replace>结束检测</Link> :
+        <button className="btn ghost sm" onClick={() => void start()}>检测本车 3D 车模</button>)}
+      {runs.map(run => <details key={run.id} className="diagnostic-run">
+        <summary>{stamp(run.at)} · {modelFinding(run)}</summary>
+        <ol>{run.events.map((event, index) => <li key={index}>
+          <span>{diagnosticSteps[event.step]}</span> <small>+{((event.at - run.at) / 1000).toFixed(1)} 秒</small>
+          {event.facts?.modelType !== undefined && <small> · modelType {event.facts.modelType}</small>}
+          {event.facts?.format && <small> · {event.facts.format.toUpperCase()} · {event.facts.bytes} 字节</small>}
+          {event.facts?.c01Compat && <small> · 已应用 C01 兼容修复</small>}
+        </li>)}</ol>
+      </details>)}
+    </Section>
+    <Section className="diagnostic-card">
+      <DiagnosticHeading icon="file" title="诊断报告" />
+      <p>包含设备版本、网络检测、车辆读取和最近三次车模加载记录。已排除账号、车架号、位置、Wi-Fi 名称和素材密钥。</p>
+      <button className="btn ghost sm" disabled={saving || testing} onClick={() => void save()}><Icon name="download" size={16} />
+        {saving ? '正在导出…' : '导出诊断报告（CSV）'}</button>
+      {notice && <p role="status">{notice}</p>}
+    </Section>
+    {m.mode === 'cloud' && m.vehicle && <details className="card diagnostic-fold">
+      <summary>动力类型与续航<Icon name="chevrond" size={16} /></summary>
+      <div className="diagnostic-fold-body">
+        <p>当前按{m.powertrainInfo.type === 'reev' ? '增程' : '纯电'}显示。{powertrainReasons[m.powertrainInfo.reason]}。</p>
+        <p>{rangeSources[m.rangeSource]}{m.current.range !== null && ' · ' + m.current.range + ' km'}</p>
+        <Link className="link" to="/vehicle-manage">管理本车动力类型</Link>
+      </div>
+    </details>}
+  </>;
 }

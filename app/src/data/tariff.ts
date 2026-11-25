@@ -55,13 +55,22 @@ export function estimateChargeRecord(charge: ChargeSession, tariff: Tariff) {
     durationMin: (charge.endedAt - charge.startedAt) / 60_000, startHHMM: `${start.getHours()}:${start.getMinutes()}` }, tariff);
 }
 
-export function chargeCostTotals(charges: ChargeSession[], tariff: Tariff) {
-  const result = { total: null as number | null, ac: null as number | null, dc: null as number | null, count: 0 };
+export function displayedChargeFee(charge: ChargeSession, tariff: Tariff, manual?: number) {
+  const estimate = estimateChargeRecord(charge, tariff);
+  const gridKwh = estimate?.gridKwh ?? charge.gridKwh;
+  const unitPrice = manual === undefined ? estimate?.averagePrice : gridKwh != null && gridKwh > 0 ? manual / gridKwh : null;
+  return { estimate, gridKwh, unitPrice, amount: manual ?? estimate?.cost ?? null };
+}
+
+export function chargeCostTotals(charges: ChargeSession[], tariff: Tariff, getManualFee: (charge: ChargeSession) => number | undefined) {
+  const result = { total: null as number | null, ac: null as number | null, dc: null as number | null, count: 0, manualCount: 0 };
   for (const charge of charges) {
-    const estimate = estimateChargeRecord(charge, tariff);
-    if (!estimate) continue;
-    result[estimate.type] = (result[estimate.type] ?? 0) + estimate.cost;
-    result.total = (result.total ?? 0) + estimate.cost;
+    const manual = getManualFee(charge);
+    const amount = manual ?? estimateChargeRecord(charge, tariff)?.cost;
+    if (amount === undefined) continue;
+    if (manual !== undefined) result.manualCount++;
+    if (charge.type === 'ac' || charge.type === 'dc') result[charge.type] = (result[charge.type] ?? 0) + amount;
+    result.total = (result.total ?? 0) + amount;
     result.count++;
   }
   return result;

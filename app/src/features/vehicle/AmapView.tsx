@@ -252,8 +252,8 @@ export function AmapView({ lat, lon, height = 240, name = '车辆位置', sub, p
         <path d={trajectory.solid} fill="none" stroke="white" strokeWidth="8" strokeLinecap="round" />
         {trajectory.paths.map(([color, path]) => <path className="amap-speed-path" key={color} d={path} fill="none" stroke={color} strokeWidth="4" strokeLinecap="round" />)}
         {trajectory.gaps && <path d={trajectory.gaps} fill="none" stroke="#727781" strokeWidth="2.5" strokeDasharray="4 4" />}
-        <circle cx={segments[0].x} cy={segments[0].y} r="6" fill="#43a047" stroke="white" strokeWidth="2" />
-        <circle cx={segments.at(-1)!.x} cy={segments.at(-1)!.y} r="6" fill="#db4437" stroke="white" strokeWidth="2" />
+        <circle aria-label="起点" cx={segments[0].x} cy={segments[0].y} r="6" fill="var(--trip-origin)" stroke="white" strokeWidth="2" />
+        <circle aria-label="终点" cx={segments.at(-1)!.x} cy={segments.at(-1)!.y} r="6" fill="var(--trip-destination)" stroke="white" strokeWidth="2" />
         {picked && <circle className="amap-route-cursor" data-sample-at={picked.at} cx={picked.x} cy={picked.y} r="7" fill="var(--accent)" stroke="white" strokeWidth="3" />}
       </svg>}
       {trajectory.withSpeed && segments.length > 1 && <div className="amap-speed-legend" aria-label="轨迹速度范围">
