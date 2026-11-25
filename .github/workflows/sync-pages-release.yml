@@ -1,0 +1,48 @@
+name: Sync website downloads
+
+on:
+  release:
+    types: [published, released, edited, unpublished, deleted]
+  schedule:
+    # Also catch attachments replaced after publishing, without editing a release.
+    - cron: '17 */6 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pages: write
+
+concurrency:
+  group: sync-website-downloads
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          ref: gh-pages
+      - name: Update published download information
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh api "repos/$GITHUB_REPOSITORY/releases/latest" | python3 .github/scripts/sync_release.py
+          if ! git diff --quiet -- index.html; then
+            git config user.name 'github-actions[bot]'
+            git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+            git add -- index.html
+            git commit -m 'Sync website downloads with the latest release'
+            git push origin HEAD:gh-pages
+          fi
+      - name: Publish if the Pages build is missing or behind
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          built=$(gh api "repos/$GITHUB_REPOSITORY/pages/builds/latest" --jq 'select(.status == "built" or .status == "building" or .status == "queued") | .commit')
+          if [[ "$built" != "$(git rev-parse HEAD)" ]]; then
+            gh api --method POST "repos/$GITHUB_REPOSITORY/pages/builds" --silent
+          fi
