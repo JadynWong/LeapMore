@@ -1,3 +1,4 @@
+import { Picker } from '../../ui/Picker';
 import { useEffect, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { Capacitor } from '@capacitor/core';
@@ -90,10 +91,10 @@ export function HAConnect() {
           <p className="tiny muted">{ha.lastSync ? '记录同步于 ' + stamp(ha.lastSync) : '尚无记录同步时间'}</p>
         </section>
         <Section title="车辆与记录">
-          {chooseCar && <label className="mapping-row"><span>HA 车辆</span><select aria-label="HA 车辆" value={ha.vin} onChange={event => ha.selectVehicle(event.target.value)}>
+          {chooseCar && <label className="mapping-row"><span>HA 车辆</span><Picker aria-label="HA 车辆" value={ha.vin} onValue={v => ha.selectVehicle(v)}>
             <option value="" disabled>选择车辆</option>
             {ha.candidates.map(vehicle => <option key={vehicle.vin} value={vehicle.vin}>{vehicle.name || '零跑车辆'} · ••••{vehicle.vin.slice(-4)}</option>)}
-          </select></label>}
+          </Picker></label>}
           <p className="small" role="status">{vehicleStatus}</p>
           {model.canSee('mileage') && model.usesHA && ha.vin && <>
             <p className="small" role="status">{ha.ledgerSyncing || ha.recordSyncing && !ha.lastSync ? '正在同步行程与充电记录…' : `已读取 ${ha.records.trips.length} 条行程 · ${ha.records.charges.length} 条充电记录`}</p>

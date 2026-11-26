@@ -1,5 +1,6 @@
 import md5 from 'blueimp-md5';
 import type { CarState } from '../types';
+import type { PreparationContent, PreparationEdit } from './preparation';
 import type { PreheatEdit } from './preheat';
 
 export type WindowTarget = 'closed' | 'vent' | 'half' | 'full';
@@ -17,8 +18,17 @@ export type RemoteCommand =
   | { kind: 'cabinHeat'; feature: CabinHeater; on: boolean }
   | { kind: 'charge'; plan: ChargePlanPatch }
   | { kind: 'charge'; health: boolean }
+  | { kind: 'sentry'; on: boolean; onlyWhenParkedOff?: true }
+  | { kind: 'prepare'; content: PreparationContent }
+  | { kind: 'prepareSchedule'; edit: PreparationEdit }
   | { kind: 'preheat'; edit: PreheatEdit }
   | { kind: 'navigation'; destination: Destination };
+
+export function needsParkingSentry(state: CarState, now = Date.now()) {
+  const age = now - (state.reportedAt ?? 0);
+  return state.sentry === false && state.gear === 0 && state.isDriving === false && state.freshness === 'fresh'
+    && age >= -5_000 && age <= 30 * 60_000;
+}
 
 export class RemoteCommandError extends Error {}
 export class OperationPinRejected extends RemoteCommandError {}
@@ -71,9 +81,11 @@ export function chargePlanState(patch: ChargePlanPatch, current: Record<string, 
   return state;
 }
 
-export function encodeRemote(command: Exclude<RemoteCommand, { kind: 'preheat' }>, plan: Record<string, unknown> = {}) {
+export function encodeRemote(command: Exclude<RemoteCommand, { kind: 'preheat' | 'prepareSchedule' }>, plan: Record<string, unknown> = {}) {
   switch (command.kind) {
     case 'lock': return { id: 110, state: { value: command.locked ? 'lock' : 'unlock' } };
+    case 'sentry': return { id: 400, state: { value: command.on ? 'on' : 'off' } };
+    case 'prepare': return { id: 360, state: command.content };
     case 'find': return { id: 120, state: { value: 'true' } };
     case 'trunk': return { id: 130, state: { value: String(command.open) } };
     case 'window': return { id: 230, state: { value: windowValues[command.position] } };
@@ -114,6 +126,7 @@ export function reportedWindowPosition(percent: CarState['windowPercent']): Wind
 
 export function matchesRemoteState(command: RemoteCommand, state: CarState): boolean {
   switch (command.kind) {
+    case 'sentry': return state.sentry === command.on;
     case 'lock': return state.locked === command.locked;
     case 'trunk': return state.trunkOpen === command.open;
     case 'shade': return state.sunshadePercent === (command.open ? 100 : 0);
@@ -139,6 +152,7 @@ export function awaitingControlEcho(state: CarState | undefined, confirmation: C
 
 export function confirmedStatePatch(command: RemoteCommand): Partial<CarState> | null {
   switch (command.kind) {
+    case 'sentry': return { sentry: command.on };
     case 'lock': return { locked: command.locked };
     case 'trunk': return { trunkOpen: command.open };
     case 'shade': return { sunshadeOpen: command.open, sunshadePercent: command.open ? 100 : 0 };

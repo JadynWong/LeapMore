@@ -2,7 +2,7 @@ import { failureFacts, failureLabels, type FailureKind } from '../data/serviceFa
 import { Capacitor, CapacitorHttp, registerPlugin } from '@capacitor/core';
 
 const arkNet = registerPlugin<{ request(options: {
-  url: string; method: string; headers: Record<string, string>; body?: string; binary?: boolean; probe?: boolean;
+  url: string; method: string; headers: Record<string, string>; body?: string; binary?: boolean; probe?: boolean; timeoutMs?: number;
 }): Promise<{ status: number; data: string }> }>('LeapNet');
 
 export const harmonyRequest = arkNet.request;
@@ -27,9 +27,11 @@ export async function request<T>(url: string, options: {
   const headers: Record<string, string> = { Accept: 'application/json' };
   if (options.token) headers.Authorization = 'Bearer ' + options.token;
   if (options.body) headers['Content-Type'] = 'application/x-www-form-urlencoded';
+  options.signal?.throwIfAborted();
   try {
     if (Capacitor.getPlatform() === 'openharmony') {
       const response = await arkNet.request({ url, method, headers, body: options.body?.toString() });
+      options.signal?.throwIfAborted();
       if (response.status < 200 || response.status >= 300) throw new NetworkError(response.status);
       return JSON.parse(response.data) as T;
     }
@@ -38,15 +40,25 @@ export async function request<T>(url: string, options: {
         url, method, headers, data: options.body?.toString(), disableRedirects: true,
         connectTimeout: 10_000, readTimeout: 20_000, responseType: 'json',
       });
+      options.signal?.throwIfAborted();
       if (response.status < 200 || response.status >= 300) throw new NetworkError(response.status);
       return (typeof response.data === 'string' ? JSON.parse(response.data) : response.data) as T;
     }
-    const response = await fetch(url, {
-      method, headers, body: options.body, redirect: 'error', cache: 'no-store',
-      referrerPolicy: 'no-referrer', signal: options.signal ?? AbortSignal.timeout(20_000),
-    });
-    if (!response.ok) throw new NetworkError(response.status);
-    return await response.json() as T;
+    const controller = new AbortController();
+    const cancel = () => controller.abort(options.signal?.reason);
+    options.signal?.addEventListener('abort', cancel, { once: true });
+    const timer = setTimeout(() => controller.abort(new DOMException('Timed out', 'TimeoutError')), 20_000);
+    try {
+      const response = await fetch(url, {
+        method, headers, body: options.body, redirect: 'error', cache: 'no-store',
+        referrerPolicy: 'no-referrer', signal: controller.signal,
+      });
+      if (!response.ok) throw new NetworkError(response.status);
+      return await response.json() as T;
+    } finally {
+      clearTimeout(timer);
+      options.signal?.removeEventListener('abort', cancel);
+    }
   } catch (error) {
     if (error instanceof NetworkError) throw error;
     if (options.signal?.aborted) throw error;

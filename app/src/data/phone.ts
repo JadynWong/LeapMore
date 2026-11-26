@@ -1,3 +1,4 @@
+import { noteRecording, recordingScope } from './recordingDiagnostics';
 import { useEffect, useLayoutEffect, useRef, useState } from 'react';
 import { focusManager } from '@tanstack/react-query';
 import { hasBackgroundRecorder, recorder } from '../platform/recorder';
@@ -14,10 +15,12 @@ export function useBackgroundVehicleRecorder(scope: string, delay: number, poll:
 
   useEffect(() => {
     if (!supported) return;
-    const polling = recorder.addListener('poll', () => {
+    const polling = recorder.addListener('poll', tick => {
       const session = requested.current;
-      if (session && session === current.current.scope &&
-          (!focusManager.isFocused() || document.hidden)) {
+      if (!session || session !== current.current.scope || (tick?.scope && tick.scope !== recordingScope(session))) return;
+      const background = !focusManager.isFocused() || document.hidden;
+      noteRecording(session, [background ? 'backgroundPoll' : 'foregroundSkip']);
+      if (background) {
         void current.current.poll().then(ok => {
           if (ok && requested.current === session) setLastPoll({ scope: session, at: Date.now() });
         }).catch(() => {});
@@ -26,7 +29,7 @@ export function useBackgroundVehicleRecorder(scope: string, delay: number, poll:
     const status = recorder.addListener('status', result => {
       if (result.running) {
         if (!requested.current || requested.current !== current.current.scope) {
-          void recorder.stop().catch(() => {});
+          void recorder.stop({ reason: 'scope-change' }).catch(() => {});
           return;
         }
         setActiveScope(requested.current);
@@ -48,7 +51,7 @@ export function useBackgroundVehicleRecorder(scope: string, delay: number, poll:
   useEffect(() => {
     if (requested.current && requested.current !== scope) {
       requested.current = '';
-      void recorder.stop().catch(() => {});
+      void recorder.stop({ reason: 'scope-change' }).catch(() => {});
     }
   }, [scope]);
 
@@ -65,7 +68,7 @@ export function useBackgroundVehicleRecorder(scope: string, delay: number, poll:
       if (value) {
         setLastPoll(undefined);
         requested.current = scope;
-        await recorder.start({ delay });
+        await recorder.start({ delay, scope: recordingScope(scope) });
       } else {
         requested.current = '';
         await recorder.stop();

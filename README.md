@@ -8,11 +8,12 @@
 
 ## 下载与安装
 
-**LeapMore 0.1.2** 提供 Android APK、iOS IPA 和鸿蒙 HAP，每个平台一份。[版本说明与下载](https://github.com/MiRaToo/LeapMore/releases/tag/v0.1.2)
+各平台的安装包和版本说明可在[最新发布页](https://github.com/MiRaToo/LeapMore/releases/latest)查看。
 
 | 系统 | 安装方式 |
 | --- | --- |
 | Android | 下载 APK，可覆盖安装之前的正式版。 |
+| 鸿蒙 | 下载 HAP。文件名带有 unsigned 的安装包需要自行签名后安装。 |
 | iOS / iPadOS | 同一个 IPA 包含主应用和桌面小组件。使用 SideStore 时选择「Keep App Extensions」，安装后打开 App 同步一次车况，再到桌面添加卡片。使用 LiveContainer 可以运行主应用，容器内的小组件无法添加到系统桌面。 |
 
 打开 App 或从后台返回时会自动检查更新。在「我的 → 关于 LeapMore」可关闭提醒、手动检查或直接下载安装包。GitHub、GitCode 和夸克网盘入口始终可见。GitCode 与网盘更新可能稍晚，下载时请核对版本号。[GitCode 发布页](https://gitcode.com/MiraRato/LeapMore/releases) · [夸克网盘备用下载](https://pan.quark.cn/s/9e6168a73f21) · [LeapMore 官网](https://leapmore.mirato66.cloud/) · [源码构建指南](app/README.md)
@@ -42,7 +43,7 @@
 
 系统版本将会话凭据放在设备的安全存储中，历史记录保存在本机。零跑车况、HA 同步和地址查询会访问相应服务。反馈问题前，请移除手机号、车架号、精确位置、令牌和操作密码。
 
-遇到网络或车况异常，可从登录页或「我的 → 故障诊断与导出」检测连接。登录并选车后，还可以检查车辆列表、车况和 3D 车模，查看动力类型与续航的判定依据，并导出 CSV 随反馈提供。
+遇到网络或车况异常，可从登录页或「我的 → 故障诊断与导出」检测连接。登录并选车后，还可以检查车辆列表、车况和 3D 车模，查看动力类型与续航的判定依据。诊断支持导出 TXT 和 CSV，分享前可先查看文件内容。
 
 LeapMore 与零跑汽车无隶属关系。遇到问题可在 [GitHub Issues](https://github.com/MiRaToo/LeapMore/issues) 提交版本号、设备系统和复现步骤。
 

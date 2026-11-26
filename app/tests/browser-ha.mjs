@@ -1,20 +1,21 @@
 import { browser,wait } from './cdp.mjs';
 import assert from 'node:assert/strict';
 const app=process.env.LEAPMORE_HA_TEST_APP ?? 'http://127.0.0.1:5176/', ha=process.env.LEAPMORE_HA_TEST_ORIGIN ?? 'http://127.0.0.1:8139';
-const b=await browser(app+'#/ha');
+const b=await browser('about:blank');
 const mode=name=>fetch(ha+'/fixture-mode?mode='+name,{method:'POST'});
 const stats=()=>fetch(ha+'/fixture-stats').then(r=>r.json());
 const find=(s)=>`Array.from(document.querySelectorAll('button,a')).find(e=>e.textContent.trim()===${JSON.stringify(s)})`;
 async function click(s){await b.run(`(() => { const e=${find(s)}; if(!e) throw new Error('missing '+${JSON.stringify(s)}); e.click(); })()`);await wait(125);}
 async function fill(sel,value,select=false){
- await b.run(`(() => {const e=document.querySelector(${JSON.stringify(sel)}); if(!e)throw new Error(${JSON.stringify(sel)}); Object.getOwnPropertyDescriptor(${select?'HTMLSelectElement':'HTMLInputElement'}.prototype,'value').set.call(e,${JSON.stringify(value)}); e.dispatchEvent(new Event(${JSON.stringify(select?'change':'input')},{bubbles:true}));})()`);
+ if(select){await b.click(sel); await b.click('dialog[open] [data-value="'+value+'"]'); return;}
+ await b.run(`(() => {const e=document.querySelector(${JSON.stringify(sel)}); if(!e)throw new Error(${JSON.stringify(sel)}); Object.getOwnPropertyDescriptor(HTMLInputElement.prototype,'value').set.call(e,${JSON.stringify(value)}); e.dispatchEvent(new Event('input',{bubbles:true}));})()`);
  await wait(45);
 }
 async function text(pattern,timeout=6500){const end=Date.now()+timeout;let body=''; while(Date.now()<end){body=await b.run('document.body.innerText'); if(pattern.test(body)) return body; await wait(130);} throw new Error('expected '+pattern+' on '+body.slice(0,900));}
 async function route(path){await b.run('location.hash='+JSON.stringify(path));await wait(220);}
-async function expandDay() {
-  assert.equal(await b.run('document.querySelectorAll(".record-day[open]").length'),0);
-  await b.click('.record-day summary');
+async function checkLatestDay() {
+  await text(/\d+\.\d km/);
+  assert.equal(await b.run('document.querySelector(".record-day")?.open'),true);
   assert.equal(await b.run('document.querySelectorAll(".record-day[open]").length'),1);
 }
 async function dragPlot(selector, from, to) {
@@ -43,7 +44,7 @@ async function tap(point) {
 }
 try{
  await b.send('Storage.clearDataForOrigin', { origin: new URL(app).origin, storageTypes: 'local_storage,indexeddb' });
- await b.reload();
+ await b.navigate(app+'#/ha');
  await text(/登录 Home Assistant/); await mode('state'); await fill('[aria-label="HA 地址"]',ha); await click('登录 Home Assistant');
  await text(/授权回调无法校验/);
  await mode('normal'); await fill('[aria-label="HA 地址"]',ha); await click('登录 Home Assistant');
@@ -64,7 +65,7 @@ try{
  await click('返回同步设置');
  await text(/立即同步/);
  await route('/home'); const home=await text(/登录零跑查看实时车况/); assert.doesNotMatch(home,/64%|288 km/); assert.match(home,/—/);
- await route('/records'); await expandDay(); const trips=await text(/10.0 km/); assert.match(trips,/HA/); assert.doesNotMatch(trips,/1\.0 km/);
+ await route('/records'); await checkLatestDay(); const trips=await text(/10.0 km/); assert.match(trips,/HA/); assert.doesNotMatch(trips,/1\.0 km/);
  assert.ok(await b.run(`(() => {
    const tabs = document.querySelector('.record-tabs'), group = tabs.getBoundingClientRect(), parent = tabs.parentElement.getBoundingClientRect();
    const [first, second] = [...tabs.querySelectorAll('button')].map(button => button.getBoundingClientRect());
@@ -302,10 +303,10 @@ try{
  assert.doesNotMatch(await b.run('document.body.innerText'),/已读取 \d 条行程/);
  await fill('[aria-label="HA 车辆"]','LFB1A2B3C4D000002',true); await text(/已读取 1 条行程 · 0 条充电记录/);
  await route('/home'); assert.doesNotMatch(await text(/登录零跑查看实时车况/),/19%/);
- await route('/records'); await expandDay(); await text(/77.0 km/); assert.doesNotMatch(await b.run('document.body.innerText'),/10.0 km/);
+ await route('/records'); await checkLatestDay(); await text(/77.0 km/); assert.doesNotMatch(await b.run('document.body.innerText'),/10.0 km/);
  await route('/ha'); await fill('[aria-label="HA 车辆"]','LFB1A2B3C4D000001',true); await text(/已读取 1 条行程 · 1 条充电记录/);
  await mode('offline'); await click('立即同步'); await text(/网络不可用|服务暂不可用|连接中断/);
- await route('/records'); await expandDay();
+ await route('/records'); await checkLatestDay();
  await b.run(`document.querySelector('.trip-row').dispatchEvent(new KeyboardEvent('keydown', {key:'Delete', bubbles:true}))`);
  await text(/仅从本机的行程列表和导出中移除/);
  assert.equal((await stats()).deletes, 0);
@@ -316,7 +317,7 @@ try{
  await route('/records'); await b.reload(); await text(/暂无行程记录/);
  await route('/ha'); await mode('multi'); await click('立即同步'); await text(/HA 车辆/);
  await fill('[aria-label="HA 车辆"]','LFB1A2B3C4D000002',true); await text(/已读取 1 条行程 · 0 条充电记录/);
- await route('/records'); await expandDay(); await text(/77.0 km/);
+ await route('/records'); await checkLatestDay(); await text(/77.0 km/);
  assert.equal(b.errors.length,0,JSON.stringify(b.errors));
  console.log(JSON.stringify({auth:'state rejection and PKCE redirect/exchange',discovery:'automatic single VIN and isolated multiple vehicles',records:'HA list parity, active trip, server-associated official charge and sampled curve, empty ledger, costs, track and energy',deletion:'local removal while HA is offline, reload and sync keep server records',sync:'automatic and manual sync, no archive permission, bootstrap/membership/pull/reset/dedupe',recover:'partial failures, offline cache, refresh, expiry and manual token',stats:await stats(),browserErrors:b.errors}));
 } catch(error){console.error(error); console.error(b.errors);process.exitCode=1;}

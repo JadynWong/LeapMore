@@ -1,7 +1,7 @@
 import { useEffect, useSyncExternalStore } from 'react';
 import { readSetting, saveSetting } from '../../data/localDatabase';
 import { namedPowertrain, resolvePowertrain } from '../../data/powertrain';
-import type { PowertrainPreference } from '../../data/powertrain';
+import type { PowertrainPreference, RangeReadings } from '../../data/powertrain';
 import type { CarState, Vehicle } from '../../data/types';
 
 function subscribe(notify: () => void) {
@@ -13,7 +13,7 @@ function subscribe(notify: () => void) {
   };
 }
 
-function persist(key: string, value: true | PowertrainPreference) {
+function persist(key: string, value: PowertrainPreference | RangeReadings['evidence']) {
   saveSetting(key, value);
   window.dispatchEvent(new Event('leapmore-powertrain'));
 }
@@ -22,15 +22,25 @@ export function usePowertrain(scope: string, vehicle?: Vehicle, state?: CarState
   const preferenceKey = 'powertrain.preference:' + scope;
   const memoryKey = 'powertrain.knownReev:' + scope;
   const preference = useSyncExternalStore(subscribe, () => scope ? readSetting<PowertrainPreference>(preferenceKey, 'auto') : 'auto');
-  const known = useSyncExternalStore(subscribe, () => !!scope && readSetting(memoryKey, false));
-  // Older vehicle lists stored 'bev' for every unnamed variant. Only trust an explicit name.
-  const named = vehicle?.declaredPowertrain ?? namedPowertrain([vehicle?.model, vehicle?.carType].join(' '));
-  const evidence = state?.rangeReadings?.evidence ?? null;
+  // A legacy boolean did not record whether a model label or actual fuel range set it.
+  const known = useSyncExternalStore(subscribe, () => {
+    const saved = scope && readSetting<unknown>(memoryKey, null);
+    return saved === 'fuel-range' || saved === 'combined-range';
+  });
+  const named = namedPowertrain([vehicle?.model, vehicle?.carType, vehicle?.declaredPowertrain].join(' '));
+  const evidence = state && state.vehicleId === vehicle?.id ? state.rangeReadings?.evidence ?? null : null;
   useEffect(() => {
-    if (scope && !known && named !== 'bev' && (evidence || named === 'reev')) persist(memoryKey, true);
-  }, [scope, known, named, evidence, memoryKey]);
+    if (!scope) return;
+    if (preference === 'bev' || named === 'bev') {
+      if (known) persist(memoryKey, null);
+    } else if (preference === 'auto' && !known && evidence) persist(memoryKey, evidence);
+  }, [scope, preference, known, named, evidence, memoryKey]);
   return {
     ...resolvePowertrain(preference, named, evidence, known), preference, evidence,
-    choose: (value: PowertrainPreference) => { if (scope) persist(preferenceKey, value); },
+    choose: (value: PowertrainPreference) => {
+      if (!scope) return;
+      if (value === 'bev') saveSetting(memoryKey, null);
+      persist(preferenceKey, value);
+    },
   };
 }

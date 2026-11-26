@@ -8,12 +8,18 @@ import UIKit
 import WidgetKit
 
 final class LeapBridgeViewController: CAPBridgeViewController {
+    override var supportedInterfaceOrientations: UIInterfaceOrientationMask { .portrait }
+    override var preferredInterfaceOrientationForPresentation: UIInterfaceOrientation { .portrait }
+    @available(iOS 26.0, *)
+    override var prefersInterfaceOrientationLocked: Bool { true }
+
     override func capacitorDidLoad() {
         bridge?.registerPluginInstance(LeapVaultPlugin())
         bridge?.registerPluginInstance(LeapAuthPlugin())
         bridge?.registerPluginInstance(LeapWidgetPlugin())
         bridge?.registerPluginInstance(LeapSettingsPlugin())
         bridge?.registerPluginInstance(LeapRecorderPlugin())
+        if #available(iOS 26.0, *) { bridge?.registerPluginInstance(LeapTripPlugin()) }
     }
 }
 
@@ -27,11 +33,7 @@ final class LeapVaultPlugin: CAPPlugin, CAPBridgedPlugin {
     private let biometricPrefix = "remote-control-biometric:"
 
     private func query(_ key: String) -> [String: Any] {
-        [
-            kSecClass as String: kSecClassGenericPassword,
-            kSecAttrService as String: "com.leapmore.app.vault",
-            kSecAttrAccount as String: key
-        ]
+        DirectQuickVault.appQuery(key)
     }
 
     @objc func get(_ call: CAPPluginCall) {
@@ -81,10 +83,11 @@ final class LeapVaultPlugin: CAPPlugin, CAPBridgedPlugin {
             return
         }
         let base = query(key)
-        let update: [String: Any] = [
+        var update: [String: Any] = [
             kSecValueData as String: Data(value.utf8),
             kSecAttrAccessible as String: kSecAttrAccessibleWhenUnlockedThisDeviceOnly
         ]
+        if key == "leapmotor-session" { update[kSecAttrGeneric as String] = DirectQuickVault.tag(value) }
         var result = SecItemUpdate(base as CFDictionary, update as CFDictionary)
         if result == errSecItemNotFound {
             result = SecItemAdd(base.merging(update) { current, _ in current } as CFDictionary, nil)
@@ -96,7 +99,11 @@ final class LeapVaultPlugin: CAPPlugin, CAPBridgedPlugin {
     @objc func remove(_ call: CAPPluginCall) {
         guard let key = call.getString("key") else { call.reject("参数不完整"); return }
         let result = SecItemDelete(query(key) as CFDictionary)
-        if result == errSecSuccess || result == errSecItemNotFound { call.resolve() }
+        if result == errSecSuccess || result == errSecItemNotFound {
+            if key == "leapmotor-session", #available(iOS 26.0, *) {
+                DispatchQueue.main.async { try? TripRecorder.shared.configure(account: "", cars: [:]); call.resolve() }
+            } else { call.resolve() }
+        }
         else { call.reject("安全存储删除失败") }
     }
 }
@@ -204,7 +211,7 @@ final class LeapAuthPlugin: CAPPlugin, CAPBridgedPlugin {
 final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapWidgetPlugin"
     let jsName = "LeapWidget"
-    let pluginMethods: [CAPPluginMethod] = ["update", "clear", "take"].map {
+    let pluginMethods: [CAPPluginMethod] = ["update", "clear", "take", "publishQuick", "takeDemo"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private let storage = LeapWidgetStorage.defaults
@@ -221,6 +228,19 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
         call.resolve()
     }
 
+    @objc func publishQuick(_ call: CAPPluginCall) {
+        guard let targets = call.getArray("targets"), let storage,
+              let data = try? JSONSerialization.data(withJSONObject: targets, options: .sortedKeys) else {
+            call.reject("无法更新快捷控制"); return
+        }
+        DirectQuickVault.ensureMigrated()
+        if storage.data(forKey: "quick-targets") != data {
+            storage.set(data, forKey: "quick-targets")
+            if #available(iOS 18.0, *) { ControlCenter.shared.reloadAllControls() }
+        }
+        call.resolve()
+    }
+
     @objc func take(_ call: CAPPluginCall) {
         let action = storage?.string(forKey: "widget-action")
         let at = storage?.object(forKey: "widget-action-at") as? Date
@@ -230,9 +250,20 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
         else { call.resolve() }
     }
 
+    @objc func takeDemo(_ call: CAPPluginCall) {
+        call.resolve(["effects": DirectQuickRuntime.takeDemo()])
+    }
+
     @objc func clear(_ call: CAPPluginCall) {
+        _ = DirectQuickRuntime.takeDemo()
         storage?.removeObject(forKey: "vehicle-summary")
         storage?.removeObject(forKey: "vehicle-summary-at")
+        storage?.removeObject(forKey: "quick-targets")
+        storage?.removeObject(forKey: "quick-pending")
+        if #available(iOS 18.0, *) {
+            for action in QuickVehicleAction.allCases { storage?.removeObject(forKey: QuickControlFeedback.key(action)) }
+        }
+        if #available(iOS 18.0, *) { ControlCenter.shared.reloadAllControls() }
         WidgetCenter.shared.reloadTimelines(ofKind: "LeapMoreVehicle")
         call.resolve()
     }
@@ -242,7 +273,7 @@ final class LeapWidgetPlugin: CAPPlugin, CAPBridgedPlugin {
 final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDelegate {
     let identifier = "LeapSettingsPlugin"
     let jsName = "LeapSettings"
-    let pluginMethods: [CAPPluginMethod] = ["open", "openAmap", "saveCsv", "saveRewardImage", "getAppIcon", "setAppIcon"].map {
+    let pluginMethods: [CAPPluginMethod] = ["open", "openAmap", "saveCsv", "saveText", "saveRewardImage", "getAppIcon", "setAppIcon"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
     private var pendingExport: (call: CAPPluginCall, folder: URL)?
@@ -288,10 +319,12 @@ final class LeapSettingsPlugin: CAPPlugin, CAPBridgedPlugin, UIDocumentPickerDel
         }
     }
 
-    @objc func saveCsv(_ call: CAPPluginCall) {
-        guard let name = call.getString("name"), name.range(of: #"^[a-zA-Z0-9_-]+\.csv$"#, options: .regularExpression) != nil,
+    @objc func saveCsv(_ call: CAPPluginCall) { saveText(call) }
+
+    @objc func saveText(_ call: CAPPluginCall) {
+        guard let name = call.getString("name"), name.range(of: #"^[a-zA-Z0-9_-]+\.(?:csv|txt)$"#, options: .regularExpression) != nil,
               let text = call.getString("text") else {
-            call.reject("CSV 文件无效")
+            call.reject("文件名或文本无效")
             return
         }
         exportFile(call, name: name) { file in

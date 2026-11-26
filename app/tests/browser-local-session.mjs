@@ -17,7 +17,7 @@ const remoteWrites = [];
 let pinCode = 0, commandStatus = 'pending', commandHttpStatus = 200, gear = 0;
 let t03 = '', routeRequests = 0, regionReads = 0;
 const carHosts = ['appuser.leapmotor.cn', 'app-gw-global-master.leapmotor.com', 'appgateway.leapmotor.com'];
-const marketHosts = ['ueapp.oss-cn-hangzhou.aliyuncs.com', 'carod-center.leapmotor.cn', 'ueapp-oss-static.leapmotor.com'];
+const marketHosts = ['www-app.leapmotor.com', 'apptec.leapmotor.cn', 'ueapp.oss-cn-hangzhou.aliyuncs.com', 'carod-center.leapmotor.cn', 'ueapp-oss-static.leapmotor.com'];
 const amapAddress = '上海市浦东新区锦绣路100号验收车位';
 const hybridHA = process.env.LEAPMORE_HYBRID_HA_TEST_ORIGIN;
 const greenRender = 'https://ueapp-oss-static.leapmotor.com/fixture-green.png';
@@ -27,6 +27,8 @@ const ownerPicture = 'https://ueapp-oss-static.leapmotor.com/fixture-owner.png';
 const marketReads = [];
 const nonce = Buffer.alloc(16, 11).toString('base64url');
 let moduleRights = '100,200,300,400';
+let boundOwner = false, sentrySignal = 0;
+let preparationPlans = [];
 let includeSecondVehicle = false;
 const viewer = new URL('../public/car3d-demo/', import.meta.url);
 const assets = (directory, names) => Object.fromEntries(names.map(name => [name, readFileSync(new URL(name, directory))]));
@@ -73,8 +75,8 @@ async function open() {
     } else if (path.endsWith('/account/v1/login')) {
       requests.exchange++;
       data = { accessToken: carToken(requests.exchange), signParam: { r2: nonce, r3: nonce }, tokenExpireTime: requests.exchange === 1 ? 1 : 7200 };
-    } else if (path.endsWith('/v1/vehicle/list')) data = { sharedcars: [
-      { ...vehicle, ...(t03 ? { carType: 'T03', seriesName: 'T03' } : {}), moduleRights, rightList: '110,161,170,400' },
+    } else if (path.endsWith('/v1/vehicle/list')) data = { [boundOwner ? 'bindcars' : 'sharedcars']: [
+      { ...vehicle, ...(t03 ? { carType: 'T03', seriesName: 'T03' } : {}), moduleRights, rightList: '110,161,170,360,361,400' },
       ...(includeSecondVehicle ? [{ ...secondVehicle, moduleRights }] : []),
     ] };
     else if (path.endsWith('/v1/vehicle/getCarRoute')) {
@@ -85,11 +87,11 @@ async function open() {
     }
     else if (path.endsWith('/appremotectl/getappointment')) {
       assert.ok([vehicle.vin, secondVehicle.vin].includes(url.searchParams.get('carvin')));
-      assert.equal(url.searchParams.get('cmdid'), '161');
+      assert.ok(['161', '361'].includes(url.searchParams.get('cmdid')));
       const { signStr, ...query } = Object.fromEntries(url.searchParams);
       const signed = { ...query, token: headers.deviceid === 'fixture-device' ? 'fixture' : access };
       assert.equal(signStr, createHash('md5').update(Object.keys(signed).sort().map(key => signed[key]).join('')).digest('hex').slice(8, 24));
-      data = JSON.stringify({ controls: preheatPlans });
+      data = JSON.stringify({ controls: url.searchParams.get('cmdid') === '361' ? preparationPlans : preheatPlans });
     }
     else if (path.endsWith('/signal/info/query')) {
       if (t03) {
@@ -105,7 +107,7 @@ async function open() {
             acSwitch: 'false', chargeState: 5, minSingleTemp: -3.5 } };
         } else code = 100;
       } else if (minExchange && headers.token !== carToken(minExchange)) code = 302002004;
-      else data = { collectTime: collectedAt ?? Date.now(), signalMap: emptySignals ? {} : { sts: reportedAt, 100003: soc, 2188: 312, 1010: gear,
+      else data = { collectTime: collectedAt ?? Date.now(), signalMap: emptySignals ? {} : { sts: reportedAt, 100003: soc, 2188: 312, 1010: gear, 3636: sentrySignal,
         2: 121.47, 3: 31.23, 2646: 234, 2653: 235, 2660: 231, 1182: 0, 1186: 1, ...openings, ...recordSignals } };
     } else if (path.endsWith('/verifyoperatepwdnew')) {
       const form = new URLSearchParams(request.postData);
@@ -128,6 +130,7 @@ async function open() {
       assert.equal(headers.sign, sign);
       assert.equal(headers.digest, sign);
       remoteWrites.push([form.get('cmdid'), JSON.parse(form.get('state'))]);
+      if (form.get('cmdid') === '361') preparationPlans = JSON.parse(form.get('state')).controls;
       if (form.get('cmdid') === '161') preheatPlans = JSON.parse(form.get('state')).controls;
       data = 'mock-command-id';
       status = commandHttpStatus;
@@ -147,7 +150,8 @@ async function open() {
       if (payload.vin === secondVehicle.vin) data = { total: 0, list: [] };
       else {
         assert.equal(payload.vin, vehicle.vin);
-        const row = { chargeGunStartTs: started, chargeGunEndTs: ended, chargeInEnergy: '23.50', chargeType: 'QUICK' };
+        const row = { chargeGunStartTs: started, chargeGunEndTs: ended, chargeInEnergy: '23.50', chargeType: 'QUICK',
+          chargeStartLatitude: '31.12345', chargeStartLongitude: '121.23456' };
         data = { total: 2, list: payload.pageNum === 1 ? [row] : [row, { ...row, chargeGunStartTs: started - 86_400_000, chargeGunEndTs: ended - 86_400_000, chargeType: 'SLOW' }] };
       }
     } else if (path.endsWith('/vehicleinfo/commonConfig')) data = { config: { 3: { percent: '80', isEnable: '1', circulation: '1', beginTime: '23:00', endTime: '06:00', cycles: '1,1,1,1,1,1,1', recharge: 1 } } };
@@ -168,8 +172,15 @@ async function open() {
       actionButtons: [{ jumpUrl: 'https://www-app.leapmotor.cn/configuration-v4.html?carCode=fixture-C10' }] }] };
     else if (path === '/mallResourceConfig/getByCode') {
       const code = url.searchParams.get('code');
-      assert.ok(['fixture-C10', 'C11'].includes(code));
-      data = { carType: code === 'C11' ? 'c11-mall-type' : 'c10-mall-type' };
+      assert.ok(['fixture-C10', 'C11', '2021C10', '2022C10'].includes(code));
+      data = code === '2021C10' ? null : { carType: code === '2022C10' ? 'historical-exact' : code === 'C11' ? 'c11-mall-type' : 'c10-mall-type' };
+    }
+    else if (path.endsWith('/resourceConfig/getByCode') || path.endsWith('/getSaleVehicleEdition') || path.endsWith('/getVehicleConfig')) data = null;
+    else if (path.includes('/getVehicleModelSeatList') && url.searchParams.get('carType') === 'historical-exact') {
+      data = path.endsWith('V4') ? { modelList: [
+        { carModel: 'exact-only', vehicleYear: 2022, vehicleModel: '历史款', vehicleSpecs: '纯电', carTypeImgsDemo: whiteRender },
+        { carModel: 'different-year', vehicleYear: 2025, vehicleModel: '其他年款', vehicleSpecs: '纯电' },
+      ] } : [];
     }
     else if (path.includes('/getVehicleModelSeatList') && url.searchParams.get('carType') === 'c11-mall-type') data = [];
     else if (path.endsWith('/getVehicleModelSeatListV4')) {
@@ -371,7 +382,23 @@ try {
   await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "发送前不确认"');
   await tab.reload();
   await until(tab, 'document.querySelector(".source-opt.on b")?.textContent === "发送前不确认"');
+  async function quickAction(action, target) {
+    const query = new URLSearchParams({ action, target: JSON.stringify(target) });
+    await tab.run('location.hash=' + JSON.stringify('/quick-action?' + query));
+  }
+  const quickCar = ['cloud:fixture-account', vehicle.carId, vehicle.vin];
   const beforeInstant = remoteWrites.length;
+  await quickAction('find', quickCar);
+  await text(tab, /确认鸣笛寻车/);
+  assert.equal(remoteWrites.length, beforeInstant);
+  await click(tab, '取消');
+  await quickAction('lock-only', ['cloud:different-account', vehicle.carId, vehicle.vin]);
+  await text(tab, /绑定的车辆或预设已不可用/);
+  assert.equal(remoteWrites.length, beforeInstant);
+  await quickAction('prepare', [...quickCar, 'removed-preset']);
+  await text(tab, /绑定的车辆或预设已不可用/);
+  assert.equal(remoteWrites.length, beforeInstant);
+
   await tab.run('location.hash="/widget-action?action=find"');
   await text(tab, /使用本机保存的操作密码/);
   assert.equal(remoteWrites.length, beforeInstant);
@@ -425,7 +452,76 @@ try {
   assert.deepEqual(await tab.run('Array.from(document.querySelectorAll(".home-entries .entry-title"),e=>e.textContent)'), ['充电', '胎压', '控制', '外观']);
   await tab.click('.home-entries a[href="#/control"]');
   await text(tab, /车辆控制/);
-  assert.deepEqual(await tab.run('Array.from(document.querySelectorAll(".tpms .tire b"), e=>e.textContent)'), ['234', '235', '231', '—']);
+  assert.equal(await tab.run("document.querySelectorAll('.vehicle-controls button[aria-disabled=true]').length"), 4);
+  await tab.click('[aria-label="哨兵模式"]');
+  await text(tab, /正在施工/);
+  await tab.run('location.hash="/control/straight"');
+  await until(tab, "location.hash === '#/control'");
+  const beforeSpecial = remoteWrites.length;
+  const sentryAttempt = () => tab.run(`(async () => {
+    const { loadCloudSession, cloudClient } = await import('/src/features/account/session.ts');
+    const client = cloudClient(await loadCloudSession());
+    try { await client.sendCommand('fixture-car', {kind:'sentry',on:true}, '654321', new AbortController().signal, () => {}); return 'ok'; }
+    catch (error) { return error.message; }
+  })()`);
+  assert.match(await sentryAttempt(), /主账号/);
+  assert.equal(remoteWrites.length, beforeSpecial);
+  boundOwner = true;
+  assert.equal(await sentryAttempt(), 'ok');
+  assert.deepEqual(remoteWrites.at(-1), ['400', {value:'on'}]);
+  boundOwner = false;
+  commandStatus = 'success';
+  await click(tab, '立即备车');
+  await until(tab, '!!document.querySelector("dialog [aria-label=零跑操作密码]")');
+  await confirmControl();
+  await text(tab, /车端已确认/);
+  await until(tab, '!document.querySelector(".cmd-sheet")');
+  assert.equal(remoteWrites.at(-1)[0], '360');
+  assert.equal(remoteWrites.at(-1)[1].air_condition.temperature, '24');
+  await quickAction('prepare', [...quickCar, 'winter']);
+  await text(tab, /冬日温暖 · 空调 26℃/);
+  await confirmControl();
+  await text(tab, /车端已确认/);
+  await until(tab, '!document.querySelector(".cmd-sheet")');
+  assert.equal(remoteWrites.at(-1)[0], '360');
+  assert.equal(remoteWrites.at(-1)[1].air_condition.temperature, '26');
+  for (const [action, kind, expected] of [['lock-only','110','lock'], ['climate-on','170','manual'], ['climate-off','170','off']]) {
+    recordSignals[1938] = action === 'climate-off' ? 1 : 0;
+    recordSignals[1298] = 0;
+    await quickAction(action, quickCar);
+    await until(tab, '!!document.querySelector("dialog [aria-label=零跑操作密码]")');
+    await confirmControl();
+    await text(tab, /车端已确认/);
+    await until(tab, '!document.querySelector(".cmd-sheet")');
+    const [cmd, payload] = remoteWrites.at(-1);
+    assert.equal(cmd, kind);
+    assert.equal(kind === '110' ? payload.value : payload.operate, expected);
+  }
+  delete recordSignals[1938];
+  delete recordSignals[1298];
+  await tab.run('location.hash="/control"');
+  await text(tab, /管理预设/);
+  await click(tab, '冬日温暖');
+  await tab.click('.schedule-entry button');
+  await text(tab, /暂无预约备车/);
+  await click(tab, '添加预约');
+  await click(tab, '保存预约');
+  await until(tab, '!!document.querySelector("dialog [aria-label=零跑操作密码]")');
+  await confirmControl();
+  await text(tab, /预约备车已更新/);
+  await until(tab, '!document.querySelector(".cmd-sheet")');
+  assert.equal(remoteWrites.at(-1)[0], '361');
+  assert.equal(preparationPlans.length, 1);
+  assert.equal(preparationPlans[0].datacontent.air_condition.temperature, '26');
+  await tab.click('.prep-plan-details');
+  await click(tab, '删除预约');
+  await until(tab, '!!document.querySelector("dialog [aria-label=零跑操作密码]")');
+  await confirmControl();
+  await text(tab, /预约备车已更新/);
+  await until(tab, '!document.querySelector(".cmd-sheet")');
+  assert.equal(preparationPlans.length, 0);
+  await tab.click('.prep-schedules [aria-label=关闭]');
+  commandStatus = 'pending';
   await tab.run('location.hash="/climate"');
   await until(tab, '!!document.querySelector(".climate-page")');
   const heaters = () => tab.run('[...document.querySelectorAll(".climate-page [role=switch]")].map(el => [el.getAttribute("aria-label"), el.getAttribute("aria-checked")])');
@@ -455,10 +551,11 @@ try {
     const card = document.querySelector('.map-card');
     return [card.querySelectorAll('.map-title').length, card.querySelectorAll('.map-pin,.amap-car').length,
       !!card.querySelector('.map-time'), card.querySelector('.amap-view').clientHeight === card.clientHeight];
-  })()`), [1, 1, true, true]);
+  })()`), [0, 1, true, true]);
   await tab.run('location.hash="/records?tab=charges"');
   await text(tab, /23.5 kWh/);
   assert.equal(await tab.run('document.querySelectorAll(".record-panel .trip-row").length'), 2);
+  assert.match(await tab.run('document.querySelector(".record-panel .trip-row .charge-place-value").textContent'), /31\.12345, 121\.23456/);
   assert.equal(chargeRequests, 6);
   await tab.click('.record-panel .trip-row');
   await text(tab, /充电详情/);
@@ -489,7 +586,13 @@ try {
   await text(tab, /80%/);
   await text(tab, /电池最低温\s*0\.0\s*°C/);
   await text(tab, /上报时加热中/);
-  assert.equal(await tab.run('document.querySelector(".schedule-grid input").value'), '23:00');
+  assert.equal(await tab.run('document.querySelector(".schedule-grid [aria-label=开始]").textContent'), '23:00');
+  await tab.click('.schedule-grid [aria-label=开始]');
+  await until(tab, 'document.querySelectorAll(".time-columns .choice-list").length === 2');
+  await tab.click('.time-columns > div:first-child [data-value="20"]');
+  await tab.click('.time-columns > div:last-child [data-value="37"]');
+  await tab.click('.choice-sheet .confirm-btns .ghost');
+  assert.equal(await tab.run('document.querySelector(".schedule-grid [aria-label=开始]").textContent'), '23:00');
   if (zip) {
     if (process.env.LEAPMORE_TEST_3D_DEBUG) {
       await tab.send('Log.enable'); await tab.send('Network.enable');
@@ -543,20 +646,29 @@ try {
   await until(tab, '!!document.querySelector(".appearance-tools [aria-label=切换静态图]")');
   const toStatic = await tab.run(`JSON.parse(localStorage.getItem('leapmore.visualMode')) !== '2d'`);
   if (toStatic) await tab.click('.appearance-tools [aria-label=切换静态图]');
-  await until(tab, '!!document.querySelector(".appearance-controls .market-line select option[value=c10-bev]")');
+  await until(tab, 'document.querySelector(".market-line [aria-label=版本]")?.textContent.includes("测试长续航版")');
   await click(tab, '查询商城车模');
   await text(tab, /测试绿/);
   await click(tab, '测试蓝');
   await until(tab, `document.querySelector('.c3d-stage img.static3d')?.currentSrc === ${JSON.stringify(blueRender)}`);
   assert.doesNotMatch(await tab.run('document.body.innerText'), /不可信图片/);
   assert.deepEqual(marketReads, ['c10-bev']);
-  await tab.run(`(() => {
-    const year = document.querySelectorAll('.appearance-controls .market-line select')[1];
-    year.value = '2024'; year.dispatchEvent(new Event('change', { bubbles: true }));
-  })()`);
+  async function enterYear(year) {
+    await tab.click('[aria-label=年款]'); await fill(tab, '输入四位年份', year);
+    await tab.click('.choice-entry .btn');
+  }
+  await enterYear('2021');
+  await text(tab, /暂未查到 C10 2021 款的外观图/);
+  assert.equal(await tab.run("document.querySelector('.market-line [aria-label=版本]').disabled"), true);
+  assert.equal(await tab.run("document.querySelector('.c3d-stage img.static3d').currentSrc"), blueRender);
+  await enterYear('2022');
+  await text(tab, /历史款/);
+  await click(tab, '查询商城车模');
+  await text(tab, /车型外观/);
+  await tab.click('[aria-label=年款]'); await tab.click('dialog[open] [data-value="2024"]');
   await click(tab, '查询商城车模');
   await text(tab, /经典白/);
-  assert.deepEqual(marketReads, ['c10-bev', 'c10-legacy']);
+  assert.deepEqual(marketReads, ['c10-bev', 'exact-only', 'exact-only', 'c10-legacy']);
   await tab.run('location.hash="/home"');
   await until(tab, `document.querySelector('.home-model img.static3d')?.currentSrc === ${JSON.stringify(whiteRender)}`);
   await tab.run('location.hash="/mine"');
@@ -661,8 +773,8 @@ try {
   ]) {
     reportedAt = sampleStart + second * 1000;
     soc = battery;
-    gear = speed ? 1 : 0;
-    recordSignals = { 1318: mileage, 1319: speed, 1149: charging ? 1 : 0, 1197: 0, 47: charging ? 1 : 0,
+    gear = charging ? null : speed ? 1 : 0;
+    recordSignals = { 1318: mileage, 1319: charging ? null : speed, 1149: charging ? 1 : 0, 1197: 0, 47: charging ? 1 : 0,
       1177: 400, 1178: charging ? -16 : 0, 1182: charging ? -2.5 : -11 };
     await until(tab, '!!document.querySelector(".hero-tools button:not(:disabled)")');
     await tab.click('[aria-label="刷新"]');
@@ -707,7 +819,7 @@ try {
   await text(tab, /验收图书馆/);
   await tab.click('.address-suggestions .row');
   await click(tab, '添加常用地址');
-  assert.deepEqual(await tab.run("JSON.parse(localStorage.getItem('leapmore.favorites'))['fixture-car'].at(-1).point"),
+  assert.deepEqual(await tab.run("Object.values(JSON.parse(localStorage.getItem('leapmore.favorites.v2')))[0].at(-1).point"),
     { lat:31.231, lon:121.471, poiId:'mock-library' });
   await tab.click('dialog [aria-label="关闭"]');
   await tab.run(`location.hash="/trips/live-${sampleStart + 6000}"`);
@@ -723,15 +835,17 @@ try {
   await text(tab, /充电功率/);
   await text(tab, /估算取电\s*0\.8\s*kWh/);
   await text(tab, /电池最低温\s*-2\.5\s*°C/);
+  await until(tab, `document.querySelector('.charge-place-value')?.textContent === ${JSON.stringify(amapAddress)}`);
   await tab.run(`location.hash="/charges/official-${started}-${ended}"`);
   await text(tab, /官方充入电量/);
+  assert.equal(await tab.run('document.querySelector(".charge-place-value").textContent'), '31.12345, 121.23456');
   await text(tab, /估算取电\s*31\.3\s*kWh/);
   await tab.run('location.hash="/records-source"');
   await text(tab, /导出记录/);
   await tab.run(`(() => {
     const click = HTMLAnchorElement.prototype.click;
     HTMLAnchorElement.prototype.click = function () {
-      if (!this.download.endsWith('.csv')) return click.call(this);
+      if (!this.download.endsWith('.csv') && !this.download.endsWith('.txt')) return click.call(this);
       window.recordsCsv = fetch(this.href).then(response => response.text()).then(csv => ({name: this.download, csv}));
     };
   })()`);
@@ -745,19 +859,35 @@ try {
   const tripDay = allRows.find(row => row.startsWith('trip,')).split(',')[2];
   assert.ok(allRows.some(row => row.startsWith('charge,') && row.split(',')[2] !== tripDay));
   await until(tab, '!document.querySelector(".record-export-sheet")');
-  await tab.click('[aria-label="导出记录"]');
-  await click(tab, '日期范围');
-  const selectDates = (start, end) => tab.run(`(() => {
-    const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, 'value').set;
-    [...document.querySelectorAll('.record-export-dates input')].forEach((input, i) => {
-      set.call(input, ${JSON.stringify([start, end])}[i]);
-      input.dispatchEvent(new Event('input', {bubbles:true}));
-    });
-  })()`);
-  await selectDates('1900-01-01', '1900-01-01');
+  // A trusted gesture gives each nested native dialog its own browser close request.
+  async function tapControl(selector) {
+    const point = await tab.run(`(() => {
+      const el = document.querySelector(${JSON.stringify(selector)}); el.scrollIntoView({ block: 'center' });
+      const r = el.getBoundingClientRect(); return { x: r.left + r.width / 2, y: r.top + r.height / 2 };
+    })()`);
+    await tab.send('Input.dispatchMouseEvent', { type: 'mousePressed', button: 'left', buttons: 1, clickCount: 1, ...point });
+    await tab.send('Input.dispatchMouseEvent', { type: 'mouseReleased', button: 'left', buttons: 0, clickCount: 1, ...point });
+    await wait(300);
+  }
+  await tab.send('Page.bringToFront');
+  await tapControl('[aria-label="导出记录"]');
+  await tapControl('.record-export-sheet [aria-label=导出范围] button:nth-child(2)');
+  await tapControl('.record-export-dates [aria-label=开始日期]');
+  await until(tab, 'document.querySelectorAll("dialog[open]").length === 2');
+  await tab.send('Input.dispatchKeyEvent', { type: 'rawKeyDown', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27, nativeVirtualKeyCode: 27 });
+  await tab.send('Input.dispatchKeyEvent', { type: 'keyUp', key: 'Escape', code: 'Escape', windowsVirtualKeyCode: 27 });
+  await until(tab, '!!document.querySelector(".record-export-sheet") && !document.querySelector(".choice-sheet")');
+  async function setDate(label, value) {
+    await tab.click('.record-export-dates [aria-label="' + label + '"]');
+    await fill(tab, '输入日期', value);
+    await tab.click('.choice-sheet .confirm-btns .accent');
+  }
+  await setDate('开始日期', '1900-01-01');
+  await setDate('结束日期', '1900-01-01');
   await text(tab, /此范围内没有可导出的记录/);
   assert.equal(await tab.run('document.querySelector(".record-export-sheet .confirm-btns .accent").disabled'), true);
-  await selectDates(tripDay, tripDay);
+  await setDate('结束日期', tripDay);
+  await setDate('开始日期', tripDay);
   await until(tab, '!document.querySelector(".record-export-sheet .confirm-btns .accent").disabled');
   await click(tab, '导出 CSV');
   const ranged = await tab.run('window.recordsCsv');
@@ -773,7 +903,7 @@ try {
   await tab.run('document.querySelector(".diagnostic-preview").scrollIntoView({ block: "center" })');
   await until(tab, zip ? 'document.querySelector(".diagnostic-preview [data-model-status]")?.dataset.modelStatus === "full"' :
     'document.querySelector(".diagnostic-run summary")?.textContent.includes("仅返回 2D")');
-  await click(tab, '导出诊断报告（CSV）');
+  await click(tab, '导出 CSV');
   await text(tab, /诊断报告已导出/);
   const diagnostics = await tab.run('window.recordsCsv');
   assert.match(diagnostics.name, /^leapmore-diagnostics-\d+\.csv$/);
@@ -785,6 +915,12 @@ try {
   assert.match(diagnostics.csv, /"check.account","[^\r\n]*404/);
   assert.match(diagnostics.csv, /"check.list","[^\r\n]*辆授权车辆/);
   assert.doesNotMatch(diagnostics.csv, /fixture-car|LFB1A2B3C4D000001|13800001234|private-model-url|fixture-device|local-session-test-account/);
+  await click(tab, '导出 TXT');
+  await until(tab, 'Promise.resolve(window.recordsCsv).then(r => r?.name.endsWith(".txt"))');
+  const txt = await tab.run('window.recordsCsv');
+  assert.match(txt.csv, /LeapMore 诊断报告/);
+  assert.match(txt.csv, /设备与服务[\s\S]*check.list[\s\S]*车模检测/);
+  assert.doesNotMatch(txt.csv, /fixture-car|LFB1A2B3C4D000001|13800001234|private-model-url|fixture-device|local-session-test-account/);
   await click(tab, '结束检测');
   await tab.run('location.hash="/records-source"');
   if (hybridHA) {
@@ -908,6 +1044,40 @@ try {
   await until(tab, 'document.querySelector(".home .temp-target")?.textContent === "24.5℃"');
   commandStatus = 'pending';
   console.log('手机记录经模拟车况、SOC 采样和持久化生成行程与充电；容量和交流、直流效率按车保存，并回算费用。');
+  if (!hybridHA) {
+    await tab.run('location.hash="/records-source"');
+    await until(tab, '!!document.querySelector(".source-opt")');
+    await tab.run("Array.from(document.querySelectorAll('button.row')).find(el=>el.innerText.includes('清理本地记录')).click()");
+    await fill(tab, '输入清除本地记录', '清除本地记录');
+    await click(tab, '清除记录');
+    await text(tab, /本车本地记录已清理/);
+    assert.equal(await tab.run("JSON.parse(localStorage.getItem('leapmore.source'))"), 'off');
+    const readFrames = "import('/src/data/localDatabase.ts').then(db=>db.readDataset('cloud-frames:fixture-account:fixture-car'))";
+    assert.equal(await tab.run(readFrames + '.then(rows=>rows?.length ?? 0)'), 0);
+    await tab.run("Array.from(document.querySelectorAll('.source-opt')).find(el=>el.querySelector('b')?.textContent==='手机记录').click()");
+    await until(tab, "JSON.parse(localStorage.getItem('leapmore.source'))==='phone'");
+    await tab.run('location.hash="/home"');
+    reportedAt = Math.max(reportedAt + 1000, Date.now());
+    const previousSignals = recordSignals;
+    recordSignals = { ...recordSignals, 47: 1, 1149: 1, 1319: 0 };
+    gear = 0;
+    await until(tab, '!!document.querySelector(".hero-tools button:not(:disabled)")');
+    await tab.click('[aria-label="刷新"]');
+    await until(tab, readFrames + '.then(rows=>rows?.at(-1)?.at===' + reportedAt + ' && rows.at(-1).data.charge==="charging")');
+    recordSignals = previousSignals;
+    console.log('清理关闭手机记录，重选手机记录后新充电样本写入成功。');
+  }
+  await tab.run('location.hash="/control"');
+  boundOwner = true;
+  const writesBeforeCheck = remoteWrites.length;
+  await tab.run(`localStorage.setItem('leapmore.always-sentry:cloud:fixture-account:' + ${JSON.stringify(vehicle.vin)}, 'true')`);
+  await tab.reload();
+  await until(tab, "document.querySelector('[aria-label=哨兵模式]')?.getAttribute('aria-disabled') === 'true'");
+  await tab.click('[aria-label=哨兵模式]');
+  await text(tab, /正在施工/);
+  assert.equal(await tab.run("document.querySelectorAll('dialog[open]').length"), 0);
+  assert.equal(remoteWrites.length, writesBeforeCheck);
+  boundOwner = false;
   includeSecondVehicle = true;
   await tab.run('location.hash="/vehicle-access"');
   await text(tab, /刷新授权/);
@@ -928,6 +1098,9 @@ try {
   await until(tab, 'location.hash === "#/home"');
   assert.equal(await tab.run('!!document.querySelector(".vehicle-energy-sheet")'), false);
   recordSignals = { 2188: null, 3235: 80, 3261: 383 };
+  const rememberedKey = 'leapmore.powertrain.knownReev:' + JSON.stringify(['fixture-account', secondVehicle.vin]);
+  await tab.run('localStorage.setItem(' + JSON.stringify(rememberedKey) + ', "true")');
+  await tab.reload();
   async function refreshFuel() {
     reportedAt += 1000;
     await until(tab, '!!document.querySelector(".hero-tools button:not(:disabled)")');
@@ -962,6 +1135,7 @@ try {
   Object.assign(recordSignals, { 3259: 420, 3260: 150, 3261: 570 });
   await refreshFuel();
   await until(tab, fuelBar);
+  assert.equal(await tab.run('JSON.parse(localStorage.getItem(' + JSON.stringify(rememberedKey) + '))'), 'fuel-range');
   assert.equal(await tab.run('document.querySelector(".hero .energy-val").textContent'), '570km');
   Object.assign(recordSignals, { 3259: 0, 3261: 150 });
   await tab.reload();
@@ -981,11 +1155,16 @@ try {
   await text(tab, /当前按纯电显示/);
   await tab.run('location.hash="/home"');
   await text(tab, new RegExp(soc + '%'));
+  Object.assign(recordSignals, { 3259: 420, 3261: 570 });
+  await refreshFuel();
+  assert.equal(await tab.run('JSON.parse(localStorage.getItem(' + JSON.stringify(rememberedKey) + '))'), null);
+  Object.assign(recordSignals, { 3259: 0, 3261: 150 });
+  await refreshFuel();
   assert.equal(await tab.run(fuelBar), false);
   await tab.run('location.hash="/vehicle-manage"');
   await text(tab, /动力类型/);
   await tab.click('[aria-label="动力类型"] button:first-child');
-  await text(tab, /当前按增程显示/);
+  await text(tab, /当前按纯电显示/);
   await tab.click('.vcard');
   await text(tab, /当前按纯电显示/);
   console.log('C11 固定 80% 虚假油量、增程空油箱记忆、按车手动覆盖及车辆切换验收通过。');

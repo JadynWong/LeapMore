@@ -249,13 +249,14 @@ async function syncMembership(socket: Socket, scope: Scope, data: Archive, signa
   }
 }
 
-export const archivePointer = (config: HAConfig, vehicle: string) => 'archive-link:' + JSON.stringify([config.url, vehicle]);
+import { archiveKey, archivePointer } from './cacheKeys.ts';
+export { archivePointer } from './cacheKeys.ts';
 
 export async function syncArchive(config: HAConfig, vehicle: string, signal: AbortSignal) {
   return usingSocket(config, async socket => {
     const info = await requireInfo(socket);
     const scope = { ...info, vehicle_id: vehicle };
-    const key = 'archive:' + JSON.stringify([scope.source_id, scope.dataset_id, vehicle]);
+    const key = archiveKey(config, scope.source_id, scope.dataset_id, vehicle);
     const pointer = archivePointer(config, vehicle);
     let data = await readDataset<Archive>(key);
     async function commit() {

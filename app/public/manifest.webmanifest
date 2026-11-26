@@ -1,0 +1,8 @@
+{
+  "name": "LeapMore",
+  "short_name": "LeapMore",
+  "start_url": "./",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "icons": [{ "src": "./assets/leaplink-icon-simple.png", "sizes": "512x512", "type": "image/png" }]
+}

@@ -83,7 +83,7 @@ export function Home({ active, modelSlot }: { active: boolean; modelSlot: RefObj
   function saveName() { if (model.vehicle && nickname.trim()) model.rename(model.vehicle, nickname); setEdit(false); }
   const controlBlocked = !!c.reason('climate');
   const point = v.location && v.location.coordinate !== 'unknown' ? mapPoint(v.location) : null;
-  const locationAddress = useAmapAddress(point, active && model.canSee('location') && !model.simulated).data;
+  const { data: locationAddress, hasKey } = useAmapAddress(point, active && model.canSee('location') && !model.simulated);
   const mapTitle = locationAddress ? locationAddress.length > 8 ? '…' + locationAddress.slice(-8) : locationAddress : '车辆位置';
   const reev = v.powertrain === 'reev';
   return <div className="home">
@@ -136,12 +136,15 @@ export function Home({ active, modelSlot }: { active: boolean; modelSlot: RefObj
             {c.hasComfort && <button className="round-btn" disabled={controlBlocked} onClick={() => { showPreset(false); c.setSheet('seat'); }} aria-label="座椅与加热"><Icon name="seatComfort" size={19} /></button>}</div>
         </section>
         {model.canSee('location') ? <div className="card map-card">
-          {active && (point ? <div className="home-mini-map"><AmapView lat={point.lat} lon={point.lon} height="100%" preview illustrated={model.simulated} /></div> : <div className="map-bg" />)}
-          <Link className="map-top" to="/location" aria-label={locationAddress ?? '车辆位置'} title={locationAddress}><span className="map-title">{mapTitle}</span></Link>
-          {(point || model.simulated) && <Link to="/location" className="map-pin" style={{ left: 100 * homeMapAnchor.x + '%', top: 100 * homeMapAnchor.y + '%' }} aria-label="查看车辆位置"><Icon name="car" size={18} /></Link>}
+          <Link to="/location" className="home-map-link" aria-label="查看车辆位置">
+            {active && (point ? <div className="home-mini-map"><AmapView lat={point.lat} lon={point.lon} height="100%" preview illustrated={model.simulated} /></div> : <div className="map-bg" />)}
+            {hasKey && <span className="map-top" title={locationAddress}><span className="map-title">{mapTitle}</span></span>}
+            {(point || model.simulated) && <span className="map-pin" aria-hidden="true" style={{ left: 100 * homeMapAnchor.x + '%', top: 100 * homeMapAnchor.y + '%' }}><Icon name="car" size={18} /></span>}
+            <span className="map-time">{model.simulated ? '2 分钟前' : v.location?.at ? stamp(v.location.at) : v.location ? '更新时间未知' : '暂无定位'}</span>
+          </Link>
           <div className="map-pills"><button className="map-pill" onClick={() => showPicture(true)}><Icon name="camera" size={13} />驻车照片</button>
             <button className="map-pill" disabled={controlBlocked} onClick={c.find}><Icon name="carHorn" size={13} />鸣笛寻车</button>
-          </div><div className="map-time">{model.simulated ? '2 分钟前' : v.location?.at ? stamp(v.location.at) : v.location ? '更新时间未知' : '暂无定位'}</div></div> :
+          </div></div> :
           <div className="card grant-card"><div className="confirm-ic"><Icon name="locate" /></div><b>车辆定位未授权</b>
             <Link className="link" to="/vehicle-access">查看车辆授权</Link>{!controlBlocked && <button className="map-pill" onClick={c.find}>鸣笛寻车</button>}</div>}
       </div>

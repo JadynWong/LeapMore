@@ -4,8 +4,9 @@ import type { Powertrain } from './types.ts';
 export type PowertrainPreference = 'auto' | Powertrain;
 
 export function namedPowertrain(name: string): Powertrain | undefined {
-  if (/增程|REEV|EREV|HYBRID/i.test(name)) return 'reev';
-  if (/纯电|BEV/i.test(name)) return 'bev';
+  const electric = /纯电|BEV|\bEV\b/i.test(name);
+  const extended = /增程|REEV|EREV|HYBRID/i.test(name);
+  if (electric !== extended) return electric ? 'bev' : 'reev';
 }
 
 export function powertrainRanges(raw: Record<string, unknown>) {
@@ -19,9 +20,12 @@ export function powertrainRanges(raw: Record<string, unknown>) {
   const [primary, fallback] = mode === 'CLTC' ? [cltc, wltc] : [wltc, cltc];
   const fuel = primary.fuel ?? fallback.fuel;
   // Compare a complete pair from one cycle. CLTC and WLTC can differ even on a BEV.
-  const pair = primary.ev !== null && primary.total !== null ? primary : fallback;
-  const evidence = fuel !== null && fuel > 0 ? 'fuel-range' :
-    pair.total !== null && pair.ev !== null && pair.total > pair.ev ? 'combined-range' : null;
+  const cycle = primary.fuel !== null || (primary.ev !== null && primary.total !== null) ? primary : fallback;
+  const extraRange = cycle.total !== null && cycle.ev !== null ? cycle.total > cycle.ev : null;
+  // Contradictory fuel and total readings must not set a permanent vehicle attribute.
+  const evidence = cycle.fuel !== null
+    ? (cycle.fuel > 0 && extraRange !== false ? 'fuel-range' : null)
+    : (extraRange ? 'combined-range' : null);
   const ev = primary.ev ?? fallback.ev;
   const live = km('2188');
   const sum = (r: typeof cltc) => r.ev !== null && r.fuel !== null ? r.ev + r.fuel : null;

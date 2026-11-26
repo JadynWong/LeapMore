@@ -43,6 +43,7 @@ export function demoRecords() {
     [12, 22, 15, 23.2, 255], [54, 21, 6, 19.7, 201], [372, 23, 17, 26.1, 262]].map(([days, hour, min, kwh, duration], i) => {
     const startedAt = at(days, hour, min);
     return { id: 'demo-charge-' + i, startedAt, endedAt: startedAt + duration * 60_000, source: 'phone', type: i ? 'ac' : 'dc',
+      position: { ...demoLocation, at: startedAt, lon: demoLocation.lon + (i ? .006 : 0) },
       kwh, gridKwh: null, socStart: 32, socEnd: 85, cost: null, partial: false, minRecordedBatteryTempC: i ? 17 : 21,
       powers: Array.from({ length: 20 }, (_, p) => ({ at: startedAt + p * duration * 3000, value: i ? 6.3 - p * .06 : 55 - p * 1.4 })),
     };

@@ -21,6 +21,17 @@ test('REEV evidence follows the selected range cycle and only compares within th
   assert.equal(powertrainRanges({ 3256: 'unknown', 3259: '80', 3262: 0 }).evidence, 'fuel-range');
 });
 
+test('a dual-powertrain series name and conflicting range fields cannot identify a BEV as a REEV', () => {
+  assert.equal(namedPowertrain('C11 纯电 / 增程'), undefined);
+  assert.equal(namedPowertrain('C10 EV / EREV'), undefined);
+  assert.equal(namedPowertrain('C10 EV'), 'bev');
+  const bev = { 3235: 80, 3260: 383, 3261: 383 };
+  assert.equal(powertrainRanges({ ...bev, 3256: 410 }).evidence, null);
+  assert.equal(powertrainRanges({ ...bev, 3259: 410 }).evidence, null);
+  assert.equal(powertrainRanges({ 3259: 0, 3260: 383, 3261: 384 }).evidence, null);
+  assert.equal(powertrainRanges({ 3256: 0, 3260: 150, 3261: 570 }).evidence, 'combined-range');
+});
+
 test('BEV range prefers the dashboard, then electric range, then total, including a single reported cycle and zero', () => {
   const read = (raw: Record<string, unknown>) => displayedRange('bev', powertrainRanges(raw));
   assert.deepEqual(read({ 2188: 0, 3257: 180 }), { km: 0, source: 'live' });

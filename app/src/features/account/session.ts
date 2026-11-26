@@ -1,3 +1,4 @@
+import type { LoginStage } from '../../data/serviceFailure';
 import { CloudSessionExpired, connectLive, exchangeCarToken, LiveVehicleClient, refreshAccountToken } from '../../data/cloud/LiveClient';
 import type { LiveVehicles } from '../../data/cloud/LiveClient';
 import type { Vehicle } from '../../data/types';
@@ -67,8 +68,9 @@ export function rememberCloudVehicles(session: LiveVehicles, vehicles: Vehicle[]
     }
   });
 }
-export async function authorizeCloud(phone: string, code: string, deviceId: string) {
-  const session = await connectLive(phone, code, deviceId);
+export async function authorizeCloud(phone: string, code: string, deviceId: string, onStage?: (stage: LoginStage) => void) {
+  const session = await connectLive(phone, code, deviceId, onStage);
+  onStage?.('session-store');
   generation++;
   renewal = undefined;
   await writeSession(() => secureSet(key, session));

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 
 const origin = process.env.LEAPMORE_DEMO_ORIGIN ?? 'http://127.0.0.1:5175/';
-const b = await browser(origin, 390, 844);
+const b = await browser('about:blank', 390, 844);
 const match = async (pattern, timeout = 6500) => {
   let body = '';
   const end = Date.now() + timeout;
@@ -31,15 +31,49 @@ const fill = async (label, value) => {
   })()`);
 };
 try {
+  await b.send('Storage.clearDataForOrigin', { origin: new URL(origin).origin, storageTypes: 'local_storage,indexeddb' });
+  await b.navigate(origin);
+  await match(/欢迎回来|驻车照片|使用演示账号/);
   if ((await b.run('document.body.innerText')).includes('欢迎使用 LeapMore')) await click('我知道了');
   const session = await b.run("localStorage.getItem('leapmore.mode')");
   if (session !== '"demo"') {
     await route('/login');
+    await match(/使用演示账号/);
     await click('使用演示账号');
     await click('进入车辆');
   }
+  const quick = (action, key) => route('/quick-action?' + new URLSearchParams({ action, target: JSON.stringify(key) }));
+  await quick('find', ['demo', 'demo-b10', 'DEMO••3106']);
+  await match(/确认鸣笛寻车/);
+  assert.match(await b.run("document.querySelector('.confirm-sheet .sub').textContent"), /家里的 B10/);
+  await click('取消');
+  await quick('prepare', ['demo', 'demo-c10', 'DEMO••8821', 'winter']);
+  await match(/确认立即备车/);
+  assert.match(await b.run("document.querySelector('.confirm-sheet').textContent"), /我的 C10.*冬日温暖/);
+  await click('取消');
   await route('/home');
-  await match(/车辆位置/);
+  await match(/驻车照片/);
+  assert.equal(await b.run("document.querySelector('.map-card .map-title')"), null);
+  for (const [x, y] of [[.07, .15], [.12, .6], [.1, .9], [.9, .95]]) {
+    await b.run(`(() => {
+      const card = document.querySelector('.map-card');
+      card.scrollIntoView({ block: 'center' });
+      const r = card.getBoundingClientRect();
+      const point = document.elementFromPoint(r.x + r.width * ${x}, r.y + r.height * ${y});
+      if (point?.closest('a') !== card.querySelector('.home-map-link')) throw Error('地图存在点击空区');
+      point.click();
+    })()`);
+    await match(/车辆位置/);
+    await b.click('.appbar [aria-label=返回]');
+    await match(/驻车照片/);
+  }
+  await click('驻车照片');
+  assert.equal(await b.run("document.querySelector('dialog[open] h2')?.textContent"), '驻车照片');
+  assert.equal(await b.run("location.hash"), '#/home');
+  await click('关闭', 'dialog[open] button');
+  await click('鸣笛寻车', '.map-pills button');
+  await match(/确认鸣笛寻车/);
+  await click('取消');
   if (process.env.LEAPMORE_TEST_3D === '1') {
     await b.run(`new Promise((resolve, reject) => {
       const stop = Date.now() + 19000;
@@ -86,8 +120,76 @@ try {
   await b.click('dialog[open] [aria-label=关闭]');
   assert.equal(await b.run("document.querySelector('.home-entries button').getAttribute('aria-description')"), '胎压异常');
   assert.equal(await b.run("getComputedStyle(document.querySelector('.home-entries button .entry-ic'), '::after').backgroundColor"), 'rgb(219, 68, 55)');
+  await b.run(`(() => {
+    const car = JSON.parse(localStorage.getItem('leapmore.activeVehicle'));
+    const config = { climate: true, temperature: 21, fan: 2, seat: 'none', steering: false, mirrors: false, destination: null };
+    const presets = [{ ...config, id: 'commute', name: '日常通勤' }, { ...config, id: 'my-trip', name: '我的旧预设' }];
+    localStorage.setItem('leapmore.preparation-presets:demo:' + car, JSON.stringify({presets, selected: 'my-trip'}));
+    localStorage.setItem('leapmore.always-sentry:demo:DEMO••8821', 'true');
+  })()`);
+  await b.click('.home-entries a[href="#/control"]');
+  await match(/一键备车/);
+  assert.equal(await b.run("document.querySelectorAll('.vehicle-controls .tpms, .vehicle-controls .tire').length"), 0);
+  for (const label of ['哨兵模式','手机遥控器','直进直出','泊车辅助']) {
+    await click(label);
+    await match(/正在施工/);
+    assert.equal(await b.run("location.hash"), '#/control');
+    assert.equal(await b.run("document.querySelectorAll('dialog[open]').length"), 0);
+  }
+  for (const feature of ['remote','straight','parking']) {
+    await route('/control/' + feature);
+    assert.equal(await b.run("location.hash"), '#/control');
+  }
+  assert.equal(await b.run("document.querySelector('.prepare-options [aria-pressed=true]').textContent"), '我的旧预设');
+  await click('冬日温暖');
+  await click('立即备车');
+  await match(/冬日温暖 · 空调 26℃ · 风量 3 档/);
+  await click('取消');
+  await click('管理预设');
+  await b.click('[aria-label="编辑冬日温暖"]');
+  await click('删除预设');
+  await click('确认删除预设');
+  await b.reload();
+  await match(/一键备车/);
+  assert.equal(await b.run("[...document.querySelectorAll('.prepare-options button')].some(e => e.textContent === '冬日温暖')"), false);
+  await click('管理预设');
+  await b.click('[aria-label="编辑日常通勤"]');
+  await match(/编辑备车预设/);
+  await b.click('.prep-editor [aria-label="关闭"]');
+  await click('新建预设');
+  assert.equal(await b.run("document.querySelectorAll('[aria-label=备车空调预设] button').length"), 4);
+  await click('风挡除霜');
+  await fill('预设名称', '测试出发');
+  await b.click('.prep-editor button.row');
+  await b.click('.prep-editor dialog button.row');
+  await b.click('[aria-label="预设座椅"] button:nth-child(2)');
+  await b.click('[aria-label="方向盘加热"]');
+  await b.click('[aria-label="后视镜加热"]');
+  await click('保存预设');
+  await click('立即备车');
+  await match(/测试出发 · 家、风挡除霜、主驾座椅加热、方向盘加热、后视镜加热/);
+  await click('确认发送');
+  await match(/车端已确认/);
+  await wait(1000);
+  await b.click('.schedule-entry button');
+  await click('添加预约');
+  await b.click('[aria-label="备车重复日期"] [aria-label="周一"]');
+  await click('保存预约');
+  await click('确认发送');
+  await match(/预约备车已更新/);
+  await wait(1000);
+  await match(/周一/);
+  assert.equal(await b.run("document.querySelector('.prep-plan-details span').textContent"), '测试出发');
+  await b.click('.prep-plan-details');
+  await click('删除预约');
+  await click('确认发送');
+  await match(/预约备车已更新/);
+  await wait(1000);
+  await match(/暂无预约备车/);
+  await b.click('dialog[open] [aria-label="关闭"]');
+  await route('/home');
   await route('/control');
-  await match(/235–245 kPa/);
+  assert.equal(await b.run("document.querySelector('.prepare-options [aria-pressed=true]').textContent"), '测试出发');
   await route('/home');
   await b.click('[aria-label=车窗]');
   await click('开一条缝');
@@ -98,7 +200,7 @@ try {
   await click('确认发送');
   await match(/车端已确认/);
   await wait(1050);
-  await match(/16.0/);
+  await match(/18.0/);
   await b.click('[aria-label="座椅与加热"]');
   await match(/主驾座椅加热/);
   await b.run("document.querySelector('dialog[open]').dispatchEvent(new Event('cancel',{cancelable:true}))");
@@ -171,6 +273,10 @@ try {
     await click('完成');
     await click('自定义车衣');
     await click('条纹');
+    await b.click('[aria-label=自定义车衣颜色]');
+    await fill('十六进制颜色', '#13579B');
+    await click('确定', '.choice-sheet button');
+    assert.match(await b.run("document.querySelector('[aria-label=自定义车衣颜色]').textContent"), /#13579B/);
     await b.click('.wrap-palette [aria-label=珊瑚红]');
     assert.equal(await b.run("document.querySelector('.wrap-adjustments').open"), false);
     await b.click('.wrap-adjustments summary');
@@ -248,9 +354,21 @@ try {
     await click('清除全部');
     await click('完成');
   }
-  await click('仅 2D');
-  await click('B10');
-  await click('查询商城车模');
+  b.on('Fetch.requestPaused', ({ requestId, request }) => {
+    const path = new URL(request.url).pathname;
+    const payload = path.endsWith('love_car_default_header.txt') ? { carIntroduction: [] } :
+      { data: path.endsWith('getByCode') ? { carType: 'demo-b10' } :
+        path.endsWith('getVehicleModelSeatListV4') ? { modelList: [{ carModel: 'demo-edition', vehicleYear: 2025, vehicleModel: '测试版', vehicleSpecs: '纯电' }] } :
+        path.endsWith('getVehicleProductConfigV4') ? { outColor: [{ color: '测试白', image: 'https://lpmall-dop-prod.oss-cn-hangzhou.aliyuncs.com/test.png' }] } : [] };
+    void b.send('Fetch.fulfillRequest', { requestId, responseCode: 200,
+      responseHeaders: [{ name: 'Access-Control-Allow-Origin', value: '*' }, { name: 'Content-Type', value: 'application/json' }],
+      body: Buffer.from(JSON.stringify(payload)).toString('base64') }).catch(() => {});
+  });
+  await b.send('Fetch.enable', { patterns: ['ueapp.oss-cn-hangzhou.aliyuncs.com', 'carod-center.leapmotor.cn'].map(host => ({ urlPattern: 'https://' + host + '/*' })) });
+  await click('仅 2D'); await b.click('.market-line [aria-label=车型]');
+  await click('B10', 'dialog button'); await match(/测试版/);
+  await click('查询商城车模'); await match(/测试白/);
+  await b.send('Fetch.disable');
   await click('完成');
   await match(/B10 · 2D 车模/);
   await route('/home');
@@ -304,8 +422,10 @@ try {
   assert.equal(await b.run('document.documentElement.dataset.theme'),'light');
   await systemColor('light');
   await b.click('.appbar [aria-label="返回"]');
+  assert.equal(await b.run("[...document.querySelectorAll('.list-card button.list-row')].filter(row => row.textContent === '退出登录').length"), 1);
   await click('退出登录');
   await match(/退出登录？/);
+  assert.equal(await b.run("!!document.querySelector('dialog[open] .btn.danger')"), false);
   await click('取消');
   assert.equal(await b.run(`[...document.querySelectorAll('.list-row')].find(row => row.textContent.trim() === '关于 LeapMore')
     ?.nextElementSibling?.textContent.trim()`), '赞赏作者');
@@ -350,6 +470,17 @@ try {
   assert.doesNotMatch(await b.run("document.querySelector('.about-license').innerText"), /版权所有/);
   assert.match(await b.run("document.querySelector('dialog[open] details[open] .about-license-text').innerText"), /GNU GENERAL PUBLIC LICENSE/);
   assert.equal(b.errors.length, 0, JSON.stringify(b.errors));
+  // The iOS build exposes the same Capacitor platform name to the shared UI.
+  await b.run("window.Capacitor.getPlatform = () => 'ios'");
+  await route('/records-source');
+  await click('查看 iPhone 后台记录指南');
+  await match(/iPhone 记录方式/);
+  assert.equal(await b.run("!!document.querySelector('.background-check')"), false);
+  await click('连接 Home Assistant');
+  await match(/HA 同步设置/);
+  await route('/background-guide');
+  await click('选择记录数据源');
+  await match(/选择数据源/);
   console.log('控车弹层、空调预设、常用地址导航、路线地图、车型、能源卡片、操作密码、主题和预发布检查通过。');
 } finally {
   await b.close();

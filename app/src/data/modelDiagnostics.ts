@@ -128,3 +128,16 @@ export function diagnosticCsv(environment: Record<string, string>, runs: Diagnos
   const cell = (value: string | number) => '"' + String(value).replaceAll('"', '""') + '"';
   return '\uFEFF' + rows.map(row => row.map(cell).join(',')).join('\r\n') + '\r\n';
 }
+
+export function diagnosticText(environment: Record<string, string>, runs: DiagnosticRun[]) {
+  const lines = ['LeapMore 诊断报告', '', '设备与服务'];
+  for (const [key, value] of Object.entries(environment)) lines.push(key + '  ' + value);
+  runs.forEach((run, index) => {
+    lines.push('', '车模检测 ' + (index + 1) + '  ' + new Date(run.at).toISOString(), modelFinding(run));
+    for (const event of run.events) {
+      const elapsed = Math.max(0, event.at - run.at);
+      lines.push('  +' + elapsed + ' ms  ' + diagnosticSteps[event.step] + (event.facts ? '  ' + JSON.stringify(event.facts) : ''));
+    }
+  });
+  return '\uFEFF' + lines.join('\r\n') + '\r\n';
+}

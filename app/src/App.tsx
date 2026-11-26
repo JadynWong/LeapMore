@@ -4,7 +4,7 @@ import { Capacitor } from '@capacitor/core';
 import { focusManager } from '@tanstack/react-query';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import { Login, Subaccount, VehicleAccess, VehicleList } from './features/account/pages';
-import { ChargingPage, ClimatePage, DrivingLock, VehicleControl } from './features/vehicle/pages';
+import { ChargingPage, ClimatePage, DrivingLock } from './features/vehicle/pages';
 import { LocationPage } from './features/vehicle/Location';
 import { VehicleSurfaces } from './features/appearance/VehicleSurfaces';
 import { VehicleVisualProvider } from './features/appearance/VehicleModel';
@@ -15,6 +15,8 @@ import { AppUpdateProvider } from './features/settings/AppUpdates';
 import { AmapSettings, AppAppearance, BackgroundGuide, Mine, OperationPin, States } from './features/settings/pages';
 import { PublishWidget, WidgetAction, WidgetControl, WidgetPreview } from './features/vehicle/Widgets';
 import { CommandProvider } from './features/vehicle/commands';
+import { PublishQuickControls, QuickAction, QuickControlSettings } from './features/vehicle/QuickControls';
+import { VehicleControl } from './features/vehicle/VehicleControl';
 import { ControlsProvider } from './features/vehicle/controls';
 import { useModelContext } from './features/context';
 import { SlidingSelector } from './ui/SlidingSelector';
@@ -47,10 +49,24 @@ function NativeLinks() {
   useEffect(() => {
     if (!Capacitor.isNativePlatform()) return;
     let receivedWidgetLink = false;
+    let lastUrl = '', lastOpen = 0;
     const open = (url: string) => {
+      const prefix = 'com.leapmore.app://widget/';
+      if (!url.startsWith(prefix)) return;
+      const now = Date.now();
+      if (lastUrl === url && now - lastOpen < 400) return;
+      lastUrl = url;
+      lastOpen = now;
+      // Older Android WebViews expose custom-scheme URLs as opaque paths.
       let intent: URL;
-      try { intent = new URL(url); } catch { return; }
-      if (intent.protocol !== 'com.leapmore.app:' || intent.hostname !== 'widget' || intent.pathname !== '/action') return;
+      try { intent = new URL('https://widget/' + url.slice(prefix.length)); } catch { return; }
+      if (intent.pathname === '/quick' || intent.pathname === '/configure') {
+        receivedWidgetLink = true;
+        const path = intent.pathname === '/quick' ? '/quick-action' : '/quick-controls';
+        latestNavigate.current(path + intent.search);
+        return;
+      }
+      if (intent.pathname !== '/action') return;
       receivedWidgetLink = true;
       const action = intent.searchParams.get('action');
       if (action && ['lock', 'climate', 'trunk', 'find'].includes(action)) latestNavigate.current('/widget-action?action=' + action);
@@ -72,13 +88,11 @@ function NativeLinks() {
     }
     if (Capacitor.getPlatform() === 'openharmony') return stopPolling;
     const listener = NativeApp.addListener('appUrlOpen', e => open(e.url));
-    // Android retains the initial appUrlOpen event until the listener is registered.
+    // A cold start can arrive before this listener, including when another plugin listener registered first.
     let active = true;
-    if (Capacitor.getPlatform() === 'ios') {
-      void listener.then(() => NativeApp.getLaunchUrl()).then(event => {
-        if (active && !receivedWidgetLink && event?.url) open(event.url);
-      }).catch(() => {});
-    }
+    void listener.then(() => NativeApp.getLaunchUrl()).then(event => {
+      if (active && !receivedWidgetLink && event?.url) open(event.url);
+    }).catch(() => {});
     return () => { active = false; stopPolling(); void listener.then(x => x.remove()).catch(() => {}); };
   }, []);
   return null;
@@ -150,7 +164,7 @@ function Screen() {
       </Routes> :
       !m.mode && !publicRoutes.includes(path) && !preview ? <Navigate to="/welcome" replace /> :
       m.expired && !['/login', '/vehicle-access', '/vehicles', '/states', ...mineRoutes].includes(path) ? <Navigate to="/login" replace /> :
-      m.mode && !m.vehicle && ![...publicRoutes, '/vehicles', '/states', ...mineRoutes].includes(path) ? <Navigate to="/vehicles" replace /> :
+      m.mode && !m.vehicle && ![...publicRoutes, '/vehicles', '/states', '/quick-action', '/quick-controls', ...mineRoutes].includes(path) ? <Navigate to="/vehicles" replace /> :
       <Routes>
         <Route path="/" element={<Navigate to={m.vehicle ? '/home' : '/vehicles'} replace />} />
         <Route path="/welcome" element={<Login />} />
@@ -160,6 +174,7 @@ function Screen() {
         <Route path="/vehicle-access" element={<VehicleAccess />} />
         <Route path="/home" element={null} />
         <Route path="/control" element={<VehicleControl />} />
+        <Route path="/control/:feature" element={<Navigate to="/control" replace />} />
         <Route path="/climate" element={<ClimatePage key={m.vehicleId} />} />
         <Route path="/charging" element={<ChargingPage key={m.vehicleId} />} />
         <Route path="/location" element={<LocationPage key={m.vehicleId} />} />
@@ -180,6 +195,8 @@ function Screen() {
         <Route path="/amap" element={<AmapSettings />} />
         <Route path="/states" element={<States />} />
         <Route path="/widgets" element={<WidgetPreview />} />
+        <Route path="/quick-controls" element={<QuickControlSettings />} />
+        <Route path="/quick-action" element={<QuickAction key={location.key} />} />
         <Route path="/widget-action" element={<WidgetAction />} />
         <Route path="*" element={<Navigate to={m.vehicle ? '/home' : '/vehicles'} replace />} />
       </Routes>}
@@ -196,5 +213,5 @@ export default function App({ widgetControl }: { widgetControl: WidgetControlReq
   if (widgetControl) return <CommandProvider onClose={widgetBridge.closeControl}><ControlsProvider>
     <WidgetControl request={widgetControl} />
   </ControlsProvider></CommandProvider>;
-  return <CommandProvider><ControlsProvider><VehicleVisualProvider><NativeLinks /><PublishWidget /><AppUpdateProvider><Screen /></AppUpdateProvider></VehicleVisualProvider></ControlsProvider></CommandProvider>;
+  return <CommandProvider><ControlsProvider><VehicleVisualProvider><NativeLinks /><PublishWidget /><PublishQuickControls /><AppUpdateProvider><Screen /></AppUpdateProvider></VehicleVisualProvider></ControlsProvider></CommandProvider>;
 }

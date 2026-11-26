@@ -6,7 +6,7 @@ import { useModelContext } from '../context';
 import { MarketPicker } from './MarketPicker';
 import { WrapEditor } from './WrapEditor';
 import type { Face, ModelStatus, useVehicleVisual } from './VehicleModel';
-import { Seg, asset, hasLocalCarAssets } from '../../ui/components';
+import { Seg } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
 
 const paints = [
@@ -15,11 +15,6 @@ const paints = [
   ['星河银', '#D4E5ED'], ['星辉银', '#A9ABC4'], ['曦露紫', '#725972'], ['漫宇蓝', '#52678E'], ['摩卡粉', '#CBB0A7'],
 ] as const;
 const backgrounds = [['auto', '跟随主题'], ['day', '日间'], ['night', '夜间'], ['studio', '影棚'], ['aurora', '极光']] as const;
-const trims: Record<string, Record<string, string[]>> = {
-  C10: { '2024': ['410舒享版', '530智享版'], '2025': ['530舒享版', '605悦享版', '605激光雷达版'], '2026': ['530舒享版', '605悦享版', '605激光雷达版'] },
-  C11: { '2024': ['500智享版', '650智享版'], '2025': ['515智享版', '580智驾版'], '2026': ['580智驾版'] },
-  B10: { '2025': ['510悦享版', '600激光雷达版'], '2026': ['510悦享版', '600激光雷达版'] },
-};
 function hsv(h: number, s: number, v: number) {
   const k = (n: number) => (n + h / 60) % 6;
   const component = (n: number) => Math.round(255 * (v - v * s * Math.max(0, Math.min(k(n), 4 - k(n), 1)))).toString(16).padStart(2, '0');
@@ -38,12 +33,8 @@ export function AppearancePage({ active, show, setShow, visual, setPaused, model
   const { mode, setMode, background, setBackground, quality, setQuality, wrap, setWraps, market, cloud, paint: shownPaint } = visual;
   const putWrap = (next: typeof wrap) => setWraps(previous => ({ ...previous, [m.vehicleId]: next }));
   const [color, setColor] = useState({ h: 258, s: .64, v: 1 });
-  const [model, setModel] = useState(m.vehicle?.model === 'B10' ? 'B10' : 'C10');
-  const [year, setYear] = useState(Object.keys(trims[model]).at(-1)!);
-  const [trim, setTrim] = useState(trims[model][year].at(-1)!);
   const [status, setStatus] = useState('');
   const rendering = modelStatus === 'full';
-  function changeModel(value: string) { const y = Object.keys(trims[value]).at(-1)!; setModel(value); setYear(y); setTrim(trims[value][y][0]); }
   async function clearModel() {
     setPaused(true);
     try {
@@ -97,13 +88,8 @@ export function AppearancePage({ active, show, setShow, visual, setPaused, model
         aria-pressed={shownPaint.name === name} onClick={() => m.setPaint(hex, name)}><i style={{ background: hex }} /><span><Icon name="check" size={12} /></span></button>)}
         <button className="swatch swatch-custom" aria-label="自定义车漆" onClick={() => setShow('paint')}><i><Icon name="plus" size={17} /></i></button></div></div>}
       <div className="c3d-sec"><div className="c3d-sec-h">车模显示</div><Seg options={[[ '3d', '自动 / 3D'], ['2d', '仅 2D']]} current={mode} choose={next => { setPaused(false); setMode(next); }} label="车模显示" /></div>
-      {mode === '2d' && (m.simulated ? <div className="c3d-sec"><div className="c3d-sec-h">2D 商城车模</div>
-        <div className="market-line"><span>车型</span><Seg options={Object.keys(trims).map(type => [type, type] as const)} current={model} choose={changeModel} label="车型" /></div>
-        <div className="market-line"><span>年份</span><Seg options={Object.keys(trims[model]).map(y => [y, y] as const)} current={year}
-          choose={y => { setYear(y); setTrim(trims[model][y][0]); }} label="年款" /></div>
-        <div className="market-line"><span>款式</span><div className="market-trims">{trims[model][year].map(t => <button key={t} className={trim === t ? 'on' : ''} onClick={() => setTrim(t)}>{t}</button>)}</div></div>
-        <button className="btn secondary sm" onClick={() => visual.setMarket({ model, year, trim, image: hasLocalCarAssets ? asset(model === 'B10' ? 'b10.png' : 'c10.png') : undefined })}>查询商城车模</button>
-      </div> : <MarketPicker selection={market} select={visual.setMarket} car={visual.modelName} year={m.vehicle?.year} energy={m.current.powertrain === 'reev' ? '增程' : '纯电'} />)}
+      {mode === '2d' && <MarketPicker key={m.vehicleId} selection={market} select={visual.setMarket} car={visual.modelName}
+        year={m.vehicle?.year} energy={m.current.powertrain === 'reev' ? '增程' : '纯电'} />}
       {show3DSettings && <>
       <div className="c3d-sec"><div className="c3d-sec-h">背景</div><Seg options={backgrounds} current={background} choose={setBackground} label="背景" /></div>
       <div className="c3d-sec"><div className="c3d-sec-h">车衣</div><div className="seg"><button onClick={() => putWrap({})} className={!Object.keys(wrap).length ? 'on' : ''}>原厂车漆</button><button onClick={() => setShow('wrap')}>自定义车衣</button></div></div>

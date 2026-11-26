@@ -31,7 +31,10 @@ test('Charging sessions use one amount and keep adjacent unplug-and-replug sessi
   const similar = charge('sampled-1', 'live', 62, 96, 'ac');
   const remote = charge('ha-charge-1', 'ha', 61, 97, 'dc');
   const next = charge('sampled-2', 'live', 97, 115, 'dc');
+  similar.position = { at: similar.startedAt, lat: 30, lon: 120, coordinate: 'gcj02' };
   const combined = combineCharges([old, similar, next], [remote]);
   assert.deepEqual(combined.charges.map(row => [row.id, row.kwh]), [[next.id, 18], [remote.id, 20], [old.id, 18]]);
   assert.deepEqual(combined.aliases.get(remote.id), [similar.id]);
+  assert.deepEqual(combined.charges.find(c => c.id === remote.id)?.position, similar.position);
+  assert.equal(combined.charges.find(c => c.id === next.id)?.position, undefined);
 });

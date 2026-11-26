@@ -17,8 +17,8 @@ def add_source(group, target, path)
   target.source_build_phase.add_file_reference(file, true)
 end
 
-shared_widget_sources = %w[VehicleActionIntent.swift LeapWidgetStorage.swift]
-(['LeapPlugins.swift'] + shared_widget_sources).each do |name|
+shared_widget_sources = %w[VehicleActionIntent.swift LeapWidgetStorage.swift QuickVehicleIntent.swift DirectQuickRuntime.swift]
+(%w[LeapPlugins.swift LeapTripPlugin.swift TripRecorder.swift TripRecordingStore.swift] + shared_widget_sources).each do |name|
   FileUtils.cp(File.join(native, name), File.join(project_root, 'App'))
   add_source(app_group, main, name)
 end
@@ -26,15 +26,27 @@ delegate = File.join(project_root, 'App', 'SceneDelegate.swift')
 source = File.read(delegate)
 File.write(delegate, source.gsub('= CAPBridgeViewController()', '= LeapBridgeViewController()'))
 
+app_delegate = File.join(project_root, 'App', 'AppDelegate.swift')
+source = File.read(app_delegate)
+unless source.include?('TripRecorder.shared.register()')
+  pattern = /(func application\(_ application: UIApplication, didFinishLaunchingWithOptions [^\n]+\{)/
+  raise '找不到 App 启动入口' unless source.match?(pattern)
+  File.write(app_delegate, source.sub(pattern) { |signature| signature + "\n        if #available(iOS 26.0, *) { TripRecorder.shared.register() }" })
+end
+
 info_path = File.join(project_root, 'App', 'Info.plist')
 info = Xcodeproj::Plist.read_from_path(info_path)
+info['UISupportedInterfaceOrientations'] = ['UIInterfaceOrientationPortrait']
+info['UISupportedInterfaceOrientations~ipad'] = ['UIInterfaceOrientationPortrait']
+info['UIRequiresFullScreen'] = true
 info['CFBundleURLTypes'] = [{ 'CFBundleURLName' => 'com.leapmore.app', 'CFBundleURLSchemes' => ['com.leapmore.app'] }]
 info['NSLocalNetworkUsageDescription'] = '读取你在本地网络中配置的 Home Assistant 车况和记录。'
 info['NSFaceIDUsageDescription'] = '验证身份以使用本机保存的车辆操作密码。'
 info.delete('NSLocationWhenInUseUsageDescription')
 info.delete('NSLocationAlwaysAndWhenInUseUsageDescription')
 background_modes = (info['UIBackgroundModes'] || []) - ['location']
-background_modes.empty? ? info.delete('UIBackgroundModes') : info['UIBackgroundModes'] = background_modes
+info['UIBackgroundModes'] = background_modes | ['processing']
+info['BGTaskSchedulerPermittedIdentifiers'] = (info['BGTaskSchedulerPermittedIdentifiers'] || []) | ['$(PRODUCT_BUNDLE_IDENTIFIER).trip.manual', '$(PRODUCT_BUNDLE_IDENTIFIER).trip.*']
 ats = { 'NSAllowsLocalNetworking' => true }
 host = ENV['LEAPMORE_IOS_HA_HTTP_HOST']
 if host && !host.empty?
@@ -48,7 +60,7 @@ Xcodeproj::Plist.write_to_path(groups, File.join(project_root, 'App', 'LeapMore.
 
 widget_folder = File.join(project_root, 'LeapWidget')
 FileUtils.mkdir_p(widget_folder)
-widget_sources = ['LeapWidget.swift'] + shared_widget_sources
+widget_sources = ['LeapWidget.swift', 'QuickVehicleControls.swift'] + shared_widget_sources
 widget_sources.each { |name| FileUtils.cp(File.join(native, name), widget_folder) }
 Xcodeproj::Plist.write_to_path(groups, File.join(widget_folder, 'LeapWidget.entitlements'))
 Xcodeproj::Plist.write_to_path({

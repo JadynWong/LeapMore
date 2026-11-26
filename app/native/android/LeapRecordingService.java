@@ -22,7 +22,14 @@ public class LeapRecordingService extends Service {
     private final Runnable tick = this::poll;
     private int delay = 60_000;
     private PowerManager.WakeLock wakeLock;
-    private String reason = "stopped";
+    private String reason = "service-destroyed";
+    private String scope = "";
+    private RecordingDiagnostics diagnostics;
+
+    static boolean runningFor(String scope) { return running != null && running.scope.equals(scope); }
+    static void stopping(LeapRecorderPlugin plugin, String reason) {
+        if (owns(plugin) && running != null) running.reason = reason;
+    }
 
     static void attach(LeapRecorderPlugin plugin) { owner = new WeakReference<>(plugin); }
 
@@ -38,12 +45,20 @@ public class LeapRecordingService extends Service {
     public int onStartCommand(Intent intent, int flags, int startId) {
         LeapRecorderPlugin plugin = owner.get();
         if (intent == null || STOP.equals(intent.getAction()) || plugin == null) {
+            reason = plugin == null ? "bridge-missing" : intent != null ? "notification" : "service-destroyed";
             stopSelf();
             return START_NOT_STICKY;
         }
         try {
-            startForeground(207, notification());
             delay = boundedDelay(intent.getIntExtra("delay", 60_000));
+            String next = intent.getStringExtra("scope");
+            if (diagnostics == null || !scope.equals(next)) {
+                if (diagnostics != null) diagnostics.stop("scope-change");
+                scope = RecordingDiagnostics.valid(next) ? next : "";
+                diagnostics = new RecordingDiagnostics(this, scope, delay);
+            }
+            reason = "service-destroyed";
+            startForeground(207, notification());
             if (wakeLock == null) {
                 PowerManager power = getSystemService(PowerManager.class);
                 wakeLock = power.newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "LeapMore:VehicleRecording");
@@ -75,8 +90,9 @@ public class LeapRecordingService extends Service {
 
     private void poll() {
         LeapRecorderPlugin plugin = owner.get();
-        if (plugin == null) { stopSelf(); return; }
-        plugin.poll();
+        if (plugin == null) { reason = "bridge-missing"; stopSelf(); return; }
+        if (diagnostics != null) diagnostics.tick(delay);
+        plugin.poll(scope);
         schedule(delay);
     }
 
@@ -105,6 +121,7 @@ public class LeapRecordingService extends Service {
     @Override
     public void onDestroy() {
         handler.removeCallbacks(tick);
+        if (diagnostics != null) diagnostics.stop(reason);
         if (wakeLock != null && wakeLock.isHeld()) wakeLock.release();
         if (running == this) running = null;
         LeapRecorderPlugin plugin = owner.get();

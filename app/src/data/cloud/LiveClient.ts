@@ -1,3 +1,4 @@
+import type { LoginStage } from '../serviceFailure';
 import { ServiceFailure } from '../serviceFailure';
 import md5 from 'blueimp-md5';
 import { diagnosticFamily, diagnosticYear } from '../modelDiagnostics';
@@ -15,9 +16,10 @@ import { cloudDay, dayStart, energyParts, officialCharge, vehicleTimestamp } fro
 import { CloudRateLimited, vehicleRateLimited } from './polling';
 import { ACCOUNT_BASE, APP_SUBVERSION, APP_VERSION, GLOBAL_HOST, GLOBAL_BASE, CAR_BASE, deriveHkdfKeyHex, hmacSha256Hex, randomDeviceId, rsaEncryptPhone, sha256Hex, sortAndConcat } from './liveCrypto';
 import { requestBinary, requestJson, vehicleServiceOrigin } from './liveHttp';
-import { chargePlanState, chargeRepeatDays, encodeRemote, encryptOperationPin, OperationPinRejected, RemoteCommandError } from './remote';
+import { chargePlanState, chargeRepeatDays, encodeRemote, encryptOperationPin, needsParkingSentry, OperationPinRejected, RemoteCommandError } from './remote';
 import type { ChargePlanPatch, RemoteCommand } from './remote';
 import { hasT03Telemetry, normalizeT03, t03Timestamp } from './t03';
+import { allowsPreparationContent, applyPreparationEdit, permitsCommand, readPreparationPlans } from './preparation';
 import { allowsPreheat, preheatCommandId, preparePreheatEdit, readPreheatEntries } from './preheat';
 
 const REGION = 'CN';
@@ -74,7 +76,7 @@ function sharedGrants(raw: Record<string, unknown>) {
   const commands = new Set(permissionCodes(raw.rightList));
   const views = new Set(permissionCodes(raw.viewPermissionList ?? raw.carPermissionList ?? raw.permissionList));
   return {
-    control: ['120', '130', String(preheatCommandId), '170', '190', '230', '240', '301', '320', '370', '440', '480'].some(code => commands.has(code)),
+    control: ['120', '130', String(preheatCommandId), '170', '190', '230', '240', '301', '320', '360', '361', '370', '440', '480'].some(code => commands.has(code)),
     location: views.has('310'),
     mileage: views.has('305'),
   };
@@ -127,7 +129,7 @@ export async function loginWithSms(phone: string, smsCode: string, deviceId = ra
     ?? (data.token ? data : undefined);
   const token = String(vo?.token || vo?.accessToken || '');
   const userId = String(vo?.accountId || vo?.userId || vo?.id || '');
-  if (!token) throw new Error('登录响应缺少 token');
+  if (!token || !userId) throw new ServiceFailure('response', Number(res._status) || undefined);
   const ttl = Number(vo?.tokenExpired || vo?.expiresIn || 21600);
   return {
     token, userId, refreshToken: vo?.refreshToken ? String(vo.refreshToken) : undefined, accountNumber, maskedPhone: maskPhone(phone),
@@ -266,14 +268,14 @@ function climateSetpoint(raw: Record<string, unknown>) {
 
 function mapVehicle(raw: Record<string, unknown>): Vehicle {
   const type = String(raw.carType || raw.carTypeCode || raw.series || '');
-  const abilities = raw.abilities ?? raw.ability;
+  const abilities = raw.carPer ?? raw.abilities ?? raw.ability;
   return {
     id: String(raw.carId || raw.id || raw.vin || ''),
     vin: String(raw.vin || raw.carVin || raw.carvin || ''),
     nickname: String(raw.nickName || raw.vinNickname || raw.name || '我的零跑'),
     model: String(raw.seriesName || type || '零跑'),
     carType: typeof raw.carType === 'string' && raw.carType.trim() ? raw.carType.trim().toUpperCase() : undefined,
-    abilities: Array.isArray(abilities) ? abilities.map(String) : undefined,
+    abilities: permissionCodes(abilities),
     commandRights: permissionCodes(raw.rightList),
     year: Number(raw.year || 0),
     declaredPowertrain: namedPowertrain(type + ' ' + String(raw.seriesName ?? '')),
@@ -311,7 +313,7 @@ function mapState(vehicleId: string, vin: string, payload: Record<string, unknow
   const stationaryGear = gear === 0 || gear === 2;
   const parked = !isDriving && (stationaryGear || speed === 0);
   const connected = plug === 1 || dc === 1 || (connection !== null && connection >= 1 && connection <= 4);
-  const charging = parked && (connection === 1 || connection === null && connected && chargePower !== null && chargePower > 0 && chargePower <= 400)
+  const charging = !isDriving && (connection === 1 || parked && connection === null && connected && chargePower !== null && chargePower > 0 && chargePower <= 400)
     ? 'charging' as const
     : (!isDriving && connected ? 'plugged' as const : 'unplugged' as const);
   const lock = rawNum(raw, '1298');
@@ -330,6 +332,7 @@ function mapState(vehicleId: string, vin: string, payload: Record<string, unknow
     soc, rangeKm: range.km, rangeReadings: ranges,
     fuelPercent: fuel,
     fuelRangeKm: ranges.fuel,
+    sentry: rawNum(raw, '3636') === 1 ? true : rawNum(raw, '3636') === 0 ? false : null,
     locked: lock == null ? null : lock === 1,
     trunkOpen: trunk == null ? null : trunk === 1,
     windowOpen: [...windows, ...windowPercent].some(x => x !== null && x > 0) ? true : windows.every(x => x === 0) ? false : null,
@@ -364,7 +367,7 @@ export class LiveVehicleClient implements VehicleClient {
   private readonly standardT03 = new Set<string>();
   private readonly t03Routes = new Map<string, { base: string; form: boolean; expires: number }>();
   private readonly t03ProbeAfter = new Map<string, number>();
-  private readonly preheatRoutes = new Map<string, { base: string; expires: number }>();
+  private readonly appointmentRoutes = new Map<string, { base: string; expires: number }>();
   constructor(private readonly car: CarLogin, private readonly account: AccountLogin, private readonly deviceId: string, vehicles: Vehicle[] = []) {
     for (const vehicle of vehicles) this.vehiclesById.set(vehicle.id, vehicle);
   }
@@ -383,10 +386,10 @@ export class LiveVehicleClient implements VehicleClient {
         if (!vehicle.id || !vehicle.vin) continue;
         const existing = items.findIndex(item => item.id === vehicle.id || item.vin.toUpperCase() === vehicle.vin.toUpperCase());
         if (existing !== -1) {
-          if (key === 'bindcars' && items[existing].shared) items[existing] = { ...vehicle, id: items[existing].id, shared: false };
+          if (key === 'bindcars' && items[existing].shared) items[existing] = { ...vehicle, id: items[existing].id, shared: false, boundOwner: true };
           continue;
         }
-        items.push({ ...vehicle, shared: key === 'sharedcars', grants: key === 'sharedcars' ? sharedGrants(raw as Record<string, unknown>) : undefined });
+        items.push({ ...vehicle, boundOwner: key === 'bindcars', shared: key === 'sharedcars', grants: key === 'sharedcars' ? sharedGrants(raw as Record<string, unknown>) : undefined });
       }
     }
     const vehicles = items;
@@ -402,10 +405,10 @@ export class LiveVehicleClient implements VehicleClient {
     return this.vehiclesById.get(vehicleId)?.vin ?? vehicleId;
   }
 
-  private async carGet(path: string, params: Record<string, string>, vin: string, allowEmpty = false, timeoutMs = 20_000, carType?: string): Promise<Record<string, unknown>> {
+  private async carGet(path: string, params: Record<string, string>, vin: string, allowEmpty = false, timeoutMs = 20_000, carType?: string, base = CAR_BASE): Promise<Record<string, unknown>> {
     const headers = await signedHeaders(this.car, this.account, this.deviceId, params, vin, carType);
     const query = new URLSearchParams(params).toString();
-    const response = await requestJson('GET', CAR_BASE + '/carownerservice/' + path + '?' + query, { headers, timeoutMs });
+    const response = await requestJson('GET', base + '/carownerservice/' + path + '?' + query, { headers, timeoutMs });
     if (!allowEmpty || Number(response.code ?? response.result) !== 100 && !/未找到数据|no data/i.test(String(response.message ?? ''))) {
       requireCloudResponse(response);
     }
@@ -499,8 +502,12 @@ export class LiveVehicleClient implements VehicleClient {
     if (!allowsPreheat(vehicle) || vehicle.shared && !vehicle.grants?.control) {
       throw new RemoteCommandError('当前车辆没有授予电池预热预约权限。');
     }
+    return readPreheatEntries(await this.readAppointment(vehicle, preheatCommandId, timeoutMs));
+  }
+
+  private async appointmentOrigin(vehicle: Vehicle, timeoutMs: number) {
     const { vin, carType } = vehicle;
-    let route = this.preheatRoutes.get(vin);
+    let route = this.appointmentRoutes.get(vin);
     if (!route || route.expires <= Date.now()) {
       const params = { vin };
       const headers = await signedHeaders(this.car, this.account, this.deviceId, params, vin, carType);
@@ -509,21 +516,35 @@ export class LiveVehicleClient implements VehicleClient {
       const data = record(response.data);
       const base = vehicleServiceOrigin(data.appCenter);
       if (!base || data.vin && String(data.vin).trim().toUpperCase() !== vin.toUpperCase()) {
-        throw new RemoteCommandError('车辆的预热预约服务暂不可用。');
+        throw new RemoteCommandError('车辆的预约服务暂不可用。');
       }
       route = { base, expires: Date.now() + 300_000 };
-      this.preheatRoutes.set(vin, route);
+      this.appointmentRoutes.set(vin, route);
     }
-    const params = { carvin: vin, cmdid: String(preheatCommandId), timespan: String(Date.now()),
+    return route.base;
+  }
+
+  private async readAppointment(vehicle: Vehicle, id: number, timeoutMs: number) {
+    const { vin, carType } = vehicle;
+    const base = await this.appointmentOrigin(vehicle, timeoutMs);
+    const params = { carvin: vin, cmdid: String(id), timespan: String(Date.now()),
       nonce: String(1_000_000 + crypto.getRandomValues(new Uint32Array(1))[0]! % 9_000_000), deviceID: this.deviceId };
     const signStr = md5(sortAndConcat({ ...params, token: this.account.token })).slice(8, 24);
     const query = { ...params, signStr };
     const headers = await signedHeaders(this.car, this.account, this.deviceId, query, vin, carType);
-    const res = await requestJson('GET', route.base + '/carownerservice/v3/api/appremotectl/getappointment?' + new URLSearchParams(query), { headers, timeoutMs });
+    const res = await requestJson('GET', base + '/carownerservice/v3/api/appremotectl/getappointment?' + new URLSearchParams(query), { headers, timeoutMs });
     const code = num(res.code ?? res.result);
     if (cloudAuthErrors.has(code ?? num(res._status) ?? 0)) throw new CloudSessionExpired();
-    if (code !== 0 || Number(res._status) >= 400 || res._raw) throw new RemoteCommandError('暂时无法读取电池预热预约。');
-    return readPreheatEntries(res.data);
+    if (code !== 0 || Number(res._status) >= 400 || res._raw) throw new RemoteCommandError(id === 361 ? '暂时无法读取预约备车。' : '暂时无法读取电池预热预约。');
+    return res.data;
+  }
+
+  async getPreparationSchedules(vehicleId: string, timeoutMs = 20_000) {
+    const vehicle = this.vehiclesById.get(vehicleId) ?? (await this.getVehicles()).find(item => item.id === vehicleId);
+    if (!vehicle || !permitsCommand(vehicle, 361) || vehicle.shared && !vehicle.grants?.control) {
+      throw new RemoteCommandError('预约备车未授权。');
+    }
+    return readPreparationPlans(await this.readAppointment(vehicle, 361, timeoutMs));
   }
 
   async getPreheatSchedules(vehicleId: string, timeoutMs = 20_000) {
@@ -600,22 +621,23 @@ export class LiveVehicleClient implements VehicleClient {
     return { url: raw ? raw.replace(/^http:/, 'https:') : null, uploadTime: num(data.uploadTime) };
   }
 
-  async getCapabilities(): Promise<Capability[]> {
+  async getCapabilities(vehicleId: string): Promise<Capability[]> {
+    const vehicle = this.vehiclesById.get(vehicleId);
     return [
       { key: 'lock', label: '车门锁', status: 'available' },
       { key: 'windows', label: '车窗', status: 'available' },
       { key: 'trunk', label: '后备箱', status: 'available' },
       { key: 'climate', label: '空调', status: 'available' },
       { key: 'seat_heat', label: '座椅加热', status: 'available' },
-      { key: 'sentry', label: '哨兵模式', status: 'unsupported' },
+      { key: 'sentry', label: '哨兵模式', status: vehicle?.boundOwner && permitsCommand(vehicle, 400) ? 'available' : 'unavailable' },
       { key: 'tpms', label: '胎压', status: 'signal_missing' },
     ];
   }
 
-  async sendCommand(vehicleId: string, command: RemoteCommand, pin: string, signal: AbortSignal, preparing: () => void, pinVerified?: () => Promise<void>) {
+  async sendCommand(vehicleId: string, command: RemoteCommand, pin: string, signal: AbortSignal, preparing: () => void, pinVerified?: () => Promise<void>, expectedVin?: string) {
     const vehicle = (await this.getVehicles()).find(item => item.id === vehicleId);
     signal.throwIfAborted();
-    if (!vehicle || vehicle.shared && command.kind !== 'lock' && !vehicle.grants?.control
+    if (!vehicle || expectedVin && vehicle.vin !== expectedVin || vehicle.shared && command.kind !== 'lock' && !vehicle.grants?.control
       || vehicle.shared && command.kind === 'navigation' && !vehicle.grants?.location) {
       throw new RemoteCommandError('当前车辆没有授予此项操作权限。');
     }
@@ -625,15 +647,27 @@ export class LiveVehicleClient implements VehicleClient {
     signal.throwIfAborted();
     if (before.isDriving || !before.stationaryGear) throw new RemoteCommandError('未确认车辆已驻车。请停车挂 P 挡并刷新车况。');
     if (command.kind === 'cabinHeat' && before[command.feature] == null) throw new RemoteCommandError('车辆暂未返回此项加热功能的状态。');
+    if (command.kind === 'sentry' && (!vehicle.boundOwner || !permitsCommand(vehicle, 400) || before.sentry == null)) {
+      throw new RemoteCommandError('哨兵模式需要主账号授权和有效的车辆状态。');
+    }
+    if (command.kind === 'sentry' && command.onlyWhenParkedOff && !needsParkingSentry(before)) {
+      throw new RemoteCommandError(before.sentry ? '车辆哨兵已开启。' : '未确认本次驻车的哨兵状态。');
+    }
+    const preparation = command.kind === 'prepare' || command.kind === 'prepareSchedule';
+    if (preparation && !permitsCommand(vehicle, command.kind === 'prepare' ? 360 : 361)) throw new RemoteCommandError('本账号没有此项备车权限。');
+    if (command.kind === 'prepare' && !allowsPreparationContent(vehicle, command.content, false, !vehicle.shared || !!vehicle.grants?.location)) {
+      throw new RemoteCommandError('当前车辆或账号不支持预设中的操作。');
+    }
+    const base = preparation ? await this.appointmentOrigin(vehicle, remoteTimeout) : CAR_BASE;
     const planPatch = command.kind === 'charge' && 'plan' in command ? command.plan : null;
     const plan = planPatch ? await this.getChargePlan(vehicleId, remoteTimeout) : {};
-    const standard = command.kind === 'preheat' ? null : encodeRemote(command, plan);
+    const standard = command.kind === 'preheat' || command.kind === 'prepareSchedule' ? null : encodeRemote(command, plan);
     const password = await encryptOperationPin(pin, this.car.accessToken);
     const post = async (path: string, payload: Record<string, string>, sending = false) => {
       const headers = await signedHeaders(this.car, this.account, this.deviceId, payload, vin, carType);
       signal.throwIfAborted();
       if (sending) preparing();
-      return requestJson('POST', CAR_BASE + '/carownerservice/' + path, {
+      return requestJson('POST', base + '/carownerservice/' + path, {
         headers: { ...headers, 'Content-Type': 'application/x-www-form-urlencoded' },
         body: new URLSearchParams(payload).toString(), timeoutMs: remoteTimeout,
       });
@@ -659,20 +693,30 @@ export class LiveVehicleClient implements VehicleClient {
     signal.throwIfAborted();
     const preheat = command.kind === 'preheat'
       ? preparePreheatEdit(await this.readPreheatControls(vehicle, remoteTimeout), command.edit, vin) : null;
-    const encoded = standard ?? { id: preheatCommandId, state: { controls: preheat!.controls } };
+    const schedule = command.kind === 'prepareSchedule'
+      ? applyPreparationEdit(await this.getPreparationSchedules(vehicleId, remoteTimeout), command.edit, vin) : null;
+    if (schedule?.target?.enable && !allowsPreparationContent(vehicle, schedule.target.datacontent, true, !vehicle.shared || !!vehicle.grants?.location)) {
+      throw new RemoteCommandError('当前车辆或账号不支持预约中的操作。');
+    }
+    const encoded = standard ?? (schedule ? { id: 361, state: { controls: schedule.controls } } : { id: preheatCommandId, state: { controls: preheat!.controls } });
     const nonce = String(1_000_000 + crypto.getRandomValues(new Uint32Array(1))[0]! % 9_000_000);
     const sentAt = Date.now();
+    const payload: Record<string, string> = { cmdid: String(encoded.id), state: JSON.stringify(encoded.state), carvin: vin, nonce, oppwd: password };
+    if (preparation) {
+      Object.assign(payload, { timespan: String(sentAt), deviceID: this.deviceId });
+      payload.signStr = md5(sortAndConcat({ ...payload, token: this.account.token })).slice(8, 24);
+    }
     const response = await (encoded.id === null
       ? post('v3/api/healthyCharging/control', { carvin: vin, state: String(encoded.state), oppwd: password }, true)
-      : post('v3/api/appremotectl', { cmdid: String(encoded.id), state: JSON.stringify(encoded.state), carvin: vin, nonce, oppwd: password }, true));
+      : post('v3/api/appremotectl', payload, true));
     requireApproval(response, false);
     const msgId = typeof response.data === 'string' ? response.data : record(response.data).msgID ?? record(response.data).msgId;
-    return { vehicleId, vin, carType, before, sentAt, planPatch, plan, preheatTarget: preheat?.plan, msgId: typeof msgId === 'string' ? msgId : null };
+    return { vehicleId, vin, carType, before, sentAt, base, planPatch, plan, preparationTarget: schedule, preheatTarget: preheat?.plan, msgId: typeof msgId === 'string' ? msgId : null };
   }
 
   async queryCommand(receipt: Awaited<ReturnType<LiveVehicleClient['sendCommand']>>) {
     if (!receipt.msgId) return 'pending';
-    const res = await this.carGet('v3/api/appremotectl/query', { msgID: receipt.msgId }, receipt.vin, false, remoteTimeout, receipt.carType);
+    const res = await this.carGet('v3/api/appremotectl/query', { msgID: receipt.msgId }, receipt.vin, false, remoteTimeout, receipt.carType, receipt.base);
     const data = record(res.data);
     const value = data.status ?? data.result;
     const status = String(value ?? '').toLowerCase();
@@ -797,7 +841,7 @@ export class LiveVehicleClient implements VehicleClient {
       fuel: num(energy?.oc100km ?? read(fuelInfo).oc100km),
     };
   }
-  async getCharges(vehicleId: string, signal?: AbortSignal): Promise<Charge[]> {
+  async getCharges(vehicleId: string, signal?: AbortSignal, includeLocation = false): Promise<Charge[]> {
     const vin = await this.resolveVin(vehicleId);
     const end = Date.now();
     const request = { vin, timeZone: 'UTC+8', startTime: cloudDay(end - 89 * 86_400_000), endTime: cloudDay(end), pageSize: 100 };
@@ -814,7 +858,7 @@ export class LiveVehicleClient implements VehicleClient {
       const data = record(response.data);
       if (!Array.isArray(data.list)) throw new Error('充电记录暂不可用。');
       for (const raw of data.list) {
-        const charge = officialCharge(record(raw));
+        const charge = officialCharge(record(raw), includeLocation);
         if (charge) charges.set(charge.id, charge);
       }
       const total = num(data.total);
@@ -825,10 +869,13 @@ export class LiveVehicleClient implements VehicleClient {
   }
 }
 
-export async function connectLive(phone: string, code: string, deviceId = randomDeviceId()): Promise<LiveVehicles> {
+export async function connectLive(phone: string, code: string, deviceId = randomDeviceId(), onStage?: (stage: LoginStage) => void): Promise<LiveVehicles> {
+  onStage?.('sms-verify');
   const account = await loginWithSms(phone, code, deviceId);
+  onStage?.('vehicle-auth');
   const car = await exchangeCarToken(account, deviceId);
   const client = new LiveVehicleClient(car, account, deviceId);
+  onStage?.('vehicle-list');
   const vehicles = await client.getVehicles();
 
   return { vehicles, account, car, deviceId };

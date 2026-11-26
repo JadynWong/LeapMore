@@ -1,3 +1,5 @@
+import { Picker } from '../../ui/Picker';
+import { supportsManualTrips } from '../../platform/iosTrip';
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
@@ -88,6 +90,7 @@ export function Mine() {
     <div className="list-card"><Row list icon="car" title="车辆管理" right={m.vehicles.length + ' 辆'} to="/vehicle-manage" />
       <Row list icon="key" title="车辆授权" to="/vehicle-access" /></div>
     <div className="list-card"><Row list icon="sun" title="外观" right={themeModes[m.theme]} to="/mine/appearance" />
+      {Capacitor.getPlatform() === 'android' && <Row list icon="gear" title="快捷控制" to="/quick-controls" />}
       <Row list icon="layout" title="桌面卡片预览" to="/widgets?from=mine" />
       <Row list icon="map" title="高德地图 Key" right={key ? '已配置' : '未配置'} onClick={() => setSheet('amap')} />
       <Row list icon="file" title="缓存管理" onClick={() => setSheet('cache')} /></div>
@@ -95,11 +98,11 @@ export function Mine() {
       <Row list icon="file" title="故障诊断与导出" to="/states" />
       <Row list icon="star" title="关于 LeapMore" onClick={() => setSheet('about')} />
       <Row list icon="heart" title="赞赏作者" onClick={() => setSheet('reward')} /></div>
-    <button className="btn logout" onClick={() => setSheet('logout')}>退出登录</button>
+    <div className="list-card"><Row list icon="logout" title="退出登录" onClick={() => setSheet('logout')} /></div>
     <p className="tiny muted settings-footer">LeapMore 是免费提供的非官方项目</p>
     {sheet === 'amap' && <AmapKeySheet close={close} />}
     {sheet === 'logout' && <Sheet title="退出登录？" close={close}><p className="confirm-desc">退出后需重新登录。本机的记录与设置会保留。</p>
-      <SheetButtons cancel={close} label="退出登录" danger action={() => { void m.logout().then(() => navigate('/login', { replace: true })).catch(() => setNote('退出失败，请重试。')); }} />{note && <p role="status">{note}</p>}</Sheet>}
+      <SheetButtons cancel={close} label="退出登录" action={() => { void m.logout().then(() => navigate('/login', { replace: true })).catch(() => setNote('退出失败，请重试。')); }} />{note && <p role="status">{note}</p>}</Sheet>}
     {sheet === 'privacy' && <Sheet title="隐私与免责声明" close={close}><p className="confirm-desc">{disclaimer}</p><p className="confirm-desc">系统版本将授权凭据保存在平台安全存储。脱敏 CSV 只包含日期与记录摘要。</p><button className="btn ghost" onClick={close}>关闭</button></Sheet>}
     {sheet === 'cache' && <Sheet title="缓存管理" close={close}><p className="confirm-desc">清理车模下载和地址查询缓存。</p><SheetButtons cancel={close} label="清理缓存" action={() => void clearCache()} />{note && <p role="status">{note}</p>}</Sheet>}
     {sheet === 'about' && <AboutSheet close={close} />}
@@ -209,6 +212,26 @@ function CheckPill({ positive, labels }: { positive: boolean | null | undefined;
 }
 
 export function BackgroundGuide() {
+  return Capacitor.getPlatform() === 'ios' ? <IOSBackgroundGuide /> : <BackgroundRecorderGuide />;
+}
+
+function IOSBackgroundGuide() {
+  const m = useModelContext();
+  return <><AppBar title="后台记录设置" back="/records-source" /><div className="page no-nav">
+    <Section title="iPhone 记录方式">
+      {supportsManualTrips() ? <><p>在行程或充电页点「开始记录」，锁屏后会继续采集该车上报的车况。系统中断时会保留已记录的路段，回到任一页点「继续记录」即可续录。</p>
+        <Row icon="route" title="前往行程记录" to="/records?tab=trips" /></> : <><p>打开 LeapMore 并保持在前台时，手机可以采集车辆上报。锁屏或切换 App 后，iOS 可能挂起采样。</p>
+      <p className="small muted">iOS 没有为车况轮询提供永久常驻开关。</p></>}
+    </Section>
+    <Section title="锁屏期间持续记录">
+      <p>在持续运行的 Home Assistant 中配置零跑车辆集成，并启用历史记录。然后在 LeapMore 连接 Home Assistant，在「记录与数据源」选择「HA 同步」或「手机记录 + HA 同步」。</p>
+      <Row icon="server" title={m.ha.connected && !m.ha.expired ? '管理 Home Assistant 连接' : '连接 Home Assistant'} to="/ha" />
+      <Row icon="route" title="选择记录数据源" to="/records-source" />
+    </Section>
+  </div></>;
+}
+
+function BackgroundRecorderGuide() {
   const m = useModelContext();
   const [brand, setBrand] = useSetting<BackgroundBrand | 'auto'>('backgroundBrandOverride', 'auto');
   const [note, setNote] = useState('');
@@ -236,6 +259,8 @@ export function BackgroundGuide() {
         </div>
         <Row icon="refresh" title="后台轮询服务" right={<CheckPill positive={running} labels={['运行中', '未运行']} />}
           sub={m.background.lastPollAt ? '最近后台查询成功 ' + stamp(m.background.lastPollAt) : undefined} />
+        <Row icon="clock" title="最近本机车况采样" right={stamp(m.cloudRecords.frames.at(-1)?.at)} />
+        {m.cloudRecords.issue && <Hint kind="warn">{m.cloudRecords.issue}</Hint>}
         <Row icon="bell" title="记录通知" onClick={() => void open('notifications')}
           right={<CheckPill positive={status?.notifications} labels={['已允许', '已关闭']} />} />
         <Row icon="battery" title="电池优化" onClick={() => void open('battery')}
@@ -249,10 +274,10 @@ export function BackgroundGuide() {
         {check.isError && <Hint kind="warn">无法读取系统状态。可打开对应设置手动核对。</Hint>}
       </Section>
       <Section title="应用自启动">
-        <select className="setting-select" aria-label="手机品牌" value={brand} onChange={e => setBrand(e.target.value as BackgroundBrand | 'auto')}>
+        <Picker className="setting-select" aria-label="手机品牌" value={brand} onValue={v => setBrand(v as BackgroundBrand | 'auto')}>
           <option value="auto">{status ? `自动识别 · ${backgroundBrands[detected].label}` : '自动识别'}</option>
           {Object.entries(backgroundBrands).map(([key, item]) => <option value={key} key={key}>{item.label}</option>)}
-        </select>
+        </Picker>
         <p className="small muted">厂商的自启动开关需手动核对。{guide.path}</p>
         <button type="button" className="btn secondary sm" onClick={() => void open('app')}>打开应用设置</button>
       </Section>
@@ -293,14 +318,14 @@ export function States() {
       {m.demo && <details className="diagnostic-fold diagnostic-demo">
         <summary>演示情景<Icon name="chevrond" size={16} /></summary>
         <div className="diagnostic-fold-body"><label className="mapping-row"><span>数据状态</span>
-      <select aria-label="数据状态" value={m.debug.scenario} onChange={e => { const scenario = e.target.value as typeof m.debug.scenario; m.setDebug(s => ({ ...s, scenario })); }}>
-        <option value="normal">正常</option><option value="stale">过期</option><option value="offline">断网</option><option value="pending">待确认</option></select></label>
-      <label className="mapping-row"><span>账号</span><select aria-label="账号情景" value={m.debug.account} onChange={e => { const account = e.target.value as typeof m.debug.account; m.setDebug(s => ({ ...s, account })); }}>
-        <option value="normal">正常</option><option value="expired">会话失效</option><option value="empty">无授权车辆</option></select></label>
-      <label className="mapping-row"><span>车型</span><select aria-label="车型" value={m.debug.powertrain} onChange={e => { const powertrain = e.target.value as typeof m.debug.powertrain; m.setDebug(s => ({ ...s, powertrain })); }}>
-        <option value="bev">纯电</option><option value="reev">增程</option></select></label>
-      <label className="mapping-row"><span>充电</span><select aria-label="充电情景" value={m.debug.charging} onChange={e => { const charging = e.target.value as typeof m.debug.charging; m.setDebug(s => ({ ...s, charging })); }}>
-        <option value="unplugged">未插枪</option><option value="plugged">已插枪</option><option value="charging">充电中</option><option value="done">充电完成</option></select></label>
+      <Picker aria-label="数据状态" value={m.debug.scenario} onValue={v => { const scenario = v as typeof m.debug.scenario; m.setDebug(s => ({ ...s, scenario })); }}>
+        <option value="normal">正常</option><option value="stale">过期</option><option value="offline">断网</option><option value="pending">待确认</option></Picker></label>
+      <label className="mapping-row"><span>账号</span><Picker aria-label="账号情景" value={m.debug.account} onValue={v => { const account = v as typeof m.debug.account; m.setDebug(s => ({ ...s, account })); }}>
+        <option value="normal">正常</option><option value="expired">会话失效</option><option value="empty">无授权车辆</option></Picker></label>
+      <label className="mapping-row"><span>车型</span><Picker aria-label="车型" value={m.debug.powertrain} onValue={v => { const powertrain = v as typeof m.debug.powertrain; m.setDebug(s => ({ ...s, powertrain })); }}>
+        <option value="bev">纯电</option><option value="reev">增程</option></Picker></label>
+      <label className="mapping-row"><span>充电</span><Picker aria-label="充电情景" value={m.debug.charging} onValue={v => { const charging = v as typeof m.debug.charging; m.setDebug(s => ({ ...s, charging })); }}>
+        <option value="unplugged">未插枪</option><option value="plugged">已插枪</option><option value="charging">充电中</option><option value="done">充电完成</option></Picker></label>
       <label className="debug-check"><input type="checkbox" checked={m.debug.driving} onChange={e => m.setDebug(s => ({ ...s, driving: e.target.checked }))} />行驶中</label>
       <fieldset className="debug-grants"><legend>共享权限</legend><label><input type="checkbox" checked disabled />基础授权 · 解锁、闭锁</label>
         {([['control', '车辆控制'], ['location', '车辆定位'], ['mileage', '里程能耗']] as const).map(([key, label]) => <label key={key}>

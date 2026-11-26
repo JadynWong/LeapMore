@@ -131,13 +131,16 @@ public class LeapSettingsPlugin extends Plugin {
     }
 
     @PluginMethod
-    public void saveCsv(PluginCall call) {
+    public void saveCsv(PluginCall call) { saveText(call); }
+
+    @PluginMethod
+    public void saveText(PluginCall call) {
         String name = call.getString("name", "");
-        if (!name.matches("[a-zA-Z0-9_-]+\\.csv") || call.getString("text") == null) {
-            call.reject("CSV 文件无效");
+        if (!name.matches("[a-zA-Z0-9_-]+\\.(?:csv|txt)") || call.getString("text") == null) {
+            call.reject("文件名或文本无效");
             return;
         }
-        chooseDocument(call, name, "text/csv");
+        chooseDocument(call, name, name.endsWith(".txt") ? "text/plain" : "text/csv");
     }
 
     @PluginMethod
@@ -162,7 +165,7 @@ public class LeapSettingsPlugin extends Plugin {
             call.resolve(new JSObject().put("saved", false));
             return;
         }
-        try (OutputStream output = getContext().getContentResolver().openOutputStream(target, "w")) {
+        try (OutputStream output = getContext().getContentResolver().openOutputStream(target, "wt")) {
             if (output == null) throw new IllegalStateException("Missing output stream");
             if ("saveRewardImage".equals(call.getMethodName())) {
                 try (InputStream input = getContext().getAssets().open("public/assets/wechat-reward-qr.png")) {

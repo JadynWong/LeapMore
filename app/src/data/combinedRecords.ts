@@ -52,16 +52,20 @@ export function combineCharges(local: Charge[], remote: Charge[]) {
     const matched = matches.get(row.id);
     if (!matched?.length) return row;
     const active = matched.find(record => record.active);
+    const end = chargeEnd(row);
+    const point = matched.map(record => record.position).find(p => p && p.at >= row.startedAt &&
+      (p.at < end || p.at === end && (row.active || end === row.startedAt)));
+    const position = row.position && row.position.coordinate !== 'unknown' ? row.position : point ?? row.position;
     const ids = matched.flatMap(record => record.sampledId ? [record.id, record.sampledId] : [record.id]);
     if (row.active && active) {
       aliases.set(active.id, [row.id, ...ids.filter(id => id !== active.id)]);
-      return active;
+      return active.position || !position ? active : { ...active, position };
     }
     aliases.set(row.id, ids);
     const equivalent = matched.find(record => Math.abs(record.startedAt - row.startedAt) < 120_000 &&
       Math.abs(chargeEnd(record) - chargeEnd(row)) < 120_000);
-    if (!equivalent) return row;
-    return { ...row, kwh: row.kwh ?? equivalent.kwh, gridKwh: row.gridKwh ?? equivalent.gridKwh,
+    if (!equivalent) return position === row.position ? row : { ...row, position };
+    return { ...row, position, kwh: row.kwh ?? equivalent.kwh, gridKwh: row.gridKwh ?? equivalent.gridKwh,
       socStart: row.socStart ?? equivalent.socStart, socEnd: row.socEnd ?? equivalent.socEnd,
       powers: row.powers.length ? row.powers : equivalent.powers,
       powerTimeline: row.powerTimeline?.length ? row.powerTimeline : equivalent.powerTimeline };

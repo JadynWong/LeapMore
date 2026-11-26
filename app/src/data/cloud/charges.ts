@@ -9,6 +9,7 @@ const maxPower = 400;
 
 type Charging = {
   timeline: MetricSample[];
+  position?: Charge['position'];
   minRecordedBatteryTempC?: number;
   type: 'ac' | 'dc' | 'unknown';
   partial: boolean;
@@ -27,7 +28,7 @@ export function sampledCharges(frames: Frame[], capacityKwh: number | null, now:
       id: 'sampled-charge-' + first.at, source: 'live', type: session.type, startedAt: first.at,
       endedAt: ended ? last.at : null, active: !ended, partial: session.partial || partial,
       kwh, socStart, socEnd, gridKwh: null, cost: null, energyBasis: kwh === null ? undefined : 'soc',
-      minRecordedBatteryTempC: session.minRecordedBatteryTempC,
+      minRecordedBatteryTempC: session.minRecordedBatteryTempC, ...(session.position && { position: session.position }),
       powerTimeline: session.timeline, powers: session.timeline.flatMap(({ at, value }) => value === null ? [] : [{ at, value }]),
     });
   }
@@ -41,7 +42,7 @@ export function sampledCharges(frames: Frame[], capacityKwh: number | null, now:
     }
     const { motion, charge, chargeType } = frame.data;
     const status = motion === 'driving' || charge === 'plugged' || charge === 'unplugged' || charge === 'done' ? false :
-      motion === 'parked' && charge === 'charging' ? true : null;
+      charge === 'charging' ? true : null;
     if (status === true) {
       const kind = chargeType === 'ac' || chargeType === 'dc' ? chargeType : 'unknown';
       if (active && active.type !== 'unknown' && kind !== 'unknown' && active.type !== kind) {
@@ -50,6 +51,7 @@ export function sampledCharges(frames: Frame[], capacityKwh: number | null, now:
         previous = false;
       }
       active ??= { timeline: [], type: kind, partial: previous !== false };
+      if (!active.position && frame.data.position?.at === frame.at) active.position = frame.data.position;
       if (active.type === 'unknown') active.type = kind;
       const temperature = numberOf(frame.data.batteryMinTemp);
       if (frame.changed.includes('batteryMinTemp') && temperature !== null) {
@@ -96,6 +98,7 @@ export function reconcileCharges(official: Charge[], sampled: Charge[], settings
     const sample = matched.get(record.id);
     return {
       ...record,
+      position: record.position ?? (sample?.position && record.endedAt !== null && sample.position.at >= record.startedAt && sample.position.at < record.endedAt ? sample.position : undefined),
       sampledId: sample?.id,
       type: record.type === 'unknown' && sample ? sample.type : record.type,
       kwh: record.kwh ?? sample?.kwh ?? null,

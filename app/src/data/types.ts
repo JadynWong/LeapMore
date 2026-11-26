@@ -15,6 +15,7 @@ export interface Vehicle {
   declaredPowertrain?: Powertrain;
   source: DataSource;
   shared?: boolean;
+  boundOwner?: boolean;
   carType?: string;
   abilities?: string[];
   commandRights?: string[];
@@ -39,6 +40,7 @@ export interface CarState {
   fuelRangeKm: number | null;
   rangeReadings?: RangeReadings;
   locked: boolean | null;
+  sentry?: boolean | null;
   trunkOpen: boolean | null;
   windowOpen: boolean | null;
   windowPercent?: (number | null)[];

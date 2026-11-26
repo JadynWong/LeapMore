@@ -3,7 +3,7 @@ import { bundleManager, common, ConfigurationConstant } from '@kit.AbilityKit';
 import { util, url } from '@kit.ArkTS';
 import { BusinessError, deviceInfo } from '@kit.BasicServicesKit';
 import { asset } from '@kit.AssetStoreKit';
-import { http, socket } from '@kit.NetworkKit';
+import { connection, http, socket } from '@kit.NetworkKit';
 import { preferences } from '@kit.ArkData';
 import { formBindingData, formProvider } from '@kit.FormKit';
 import { fileIo, picker } from '@kit.CoreFileKit';
@@ -14,7 +14,10 @@ function reject(call: PluginCall, message: string): void { call.rejectMessage('L
 const utf8 = new util.TextEncoder();
 const decoder = util.TextDecoder.create('utf-8');
 interface SaveResult { saved: boolean }
-interface DiagnosticEnvironment { os: string; sdk: number }
+interface DiagnosticEnvironment {
+  os: string; sdk: number; activeNetwork?: boolean; wifi?: boolean; cellular?: boolean; ethernet?: boolean;
+  vpn?: boolean; validated?: boolean; networkInfoError?: number;
+}
 interface AppIconStatus { icon: string; canChange: boolean; }
 
 export class LeapSettings extends CapacitorPlugin {
@@ -22,11 +25,9 @@ export class LeapSettings extends CapacitorPlugin {
   constructor(context: common.UIAbilityContext) {
     super();
     this.context = context;
-    this.registerMethod('diagnosticEnvironment', call => {
-      const facts: DiagnosticEnvironment = { os: deviceInfo.osFullName, sdk: deviceInfo.sdkApiVersion };
-      call.resolve(facts);
-    });
-    this.registerMethod('saveCsv', call => { this.saveCsv(call); });
+    this.registerMethod('diagnosticEnvironment', call => { this.diagnosticEnvironment(call); });
+    this.registerMethod('saveCsv', call => { this.saveText(call); });
+    this.registerMethod('saveText', call => { this.saveText(call); });
     this.registerMethod('saveRewardImage', call => {
       this.saveDocument(call, 'LeapMore-微信赞赏码.png', () =>
         this.context.resourceManager.getRawFileContentSync('www/assets/wechat-reward-qr.png'));
@@ -45,6 +46,25 @@ export class LeapSettings extends CapacitorPlugin {
     });
     this.registerMethod('getAppIcon', call => { this.getAppIcon(call); });
     this.registerMethod('setAppIcon', call => { this.setAppIcon(call); });
+  }
+
+  private async diagnosticEnvironment(call: PluginCall): Promise<void> {
+    const facts: DiagnosticEnvironment = { os: deviceInfo.osFullName, sdk: deviceInfo.sdkApiVersion };
+    try {
+      const net = await connection.getDefaultNet();
+      facts.activeNetwork = net.netId !== 0;
+      if (facts.activeNetwork) {
+        const caps = await connection.getNetCapabilities(net);
+        facts.wifi = caps.bearerTypes.includes(connection.NetBearType.BEARER_WIFI);
+        facts.cellular = caps.bearerTypes.includes(connection.NetBearType.BEARER_CELLULAR);
+        facts.ethernet = caps.bearerTypes.includes(connection.NetBearType.BEARER_ETHERNET);
+        facts.vpn = caps.bearerTypes.includes(connection.NetBearType.BEARER_VPN);
+        facts.validated = caps.networkCap?.includes(connection.NetCap.NET_CAPABILITY_VALIDATED);
+      }
+    } catch (error) {
+      facts.networkInfoError = (error as BusinessError).code;
+    }
+    call.resolve(facts);
   }
 
   private async getAppIcon(call: PluginCall): Promise<void> {
@@ -85,9 +105,9 @@ export class LeapSettings extends CapacitorPlugin {
     call.resolve();
   }
 
-  private async saveCsv(call: PluginCall): Promise<void> {
+  private async saveText(call: PluginCall): Promise<void> {
     const name = call.getString('name');
-    if (!/^[a-zA-Z0-9_-]+\.csv$/.test(name)) { reject(call, 'CSV 文件无效'); return; }
+    if (!/^[a-zA-Z0-9_-]+\.(csv|txt)$/.test(name)) { reject(call, '文件名或文本无效'); return; }
     await this.saveDocument(call, name, () => utf8.encodeInto(call.getString('text')));
   }
 
@@ -99,7 +119,15 @@ export class LeapSettings extends CapacitorPlugin {
       if (targets.length > 0) {
         const bytes = contents();
         const file = fileIo.openSync(targets[0], fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.TRUNC);
-        try { fileIo.writeSync(file.fd, bytes.buffer, { length: bytes.byteLength }); }
+        try {
+          let offset = 0;
+          while (offset < bytes.byteLength) {
+            const remaining = bytes.buffer.slice(bytes.byteOffset + offset, bytes.byteOffset + bytes.byteLength);
+            const count = fileIo.writeSync(file.fd, remaining);
+            if (count <= 0) throw new Error('写入不完整');
+            offset += count;
+          }
+        }
         finally { fileIo.closeSync(file); }
       }
       const result: SaveResult = { saved: targets.length > 0 };
@@ -326,22 +354,30 @@ export class LeapNet extends CapacitorPlugin {
     if (!/^https?:\/\//.test(address) || !['GET', 'POST', 'HEAD'].includes(input)) { reject(call, '无效请求'); return; }
     const binary = call.getBoolean('binary');
     const probe = call.getBoolean('probe');
-    const client = http.createHttp();
+    let client: http.HttpRequest | undefined = undefined;
     try {
+      client = http.createHttp();
+      const timeout = call.getNumber('timeoutMs');
       const options: http.HttpRequestOptions = {
         method: input === 'POST' ? http.RequestMethod.POST : input === 'HEAD' ? http.RequestMethod.HEAD : http.RequestMethod.GET,
-        header: call.getObject('headers'), usingCache: false, connectTimeout: probe ? 6000 : 10000, readTimeout: probe ? 6000 : 20000,
+        header: call.getObject('headers'), usingCache: false, connectTimeout: timeout > 0 ? Math.min(timeout, 20000) : probe ? 6000 : 10000,
+        readTimeout: timeout > 0 ? Math.min(timeout, 120000) : probe ? 6000 : 20000,
         expectDataType: binary ? http.HttpDataType.ARRAY_BUFFER : http.HttpDataType.STRING
       };
-      if (input === 'POST') options.extraData = call.getString('body');
+      const body = call.getString('body');
+      // ArkTS HTTP rejects an explicit empty string for POST. Login sends its parameters in the URL.
+      if (input === 'POST' && body.length > 0) options.extraData = body;
       const reply = await client.request(address, options);
       const value = reply.result instanceof ArrayBuffer && binary
         ? new util.Base64Helper().encodeToStringSync(new Uint8Array(reply.result))
         : typeof reply.result === 'string' ? reply.result : '';
       const data: NetResult = { status: reply.responseCode, data: value };
       call.resolve(data);
-    } catch { reject(call, '网络不可用'); }
-    finally { client.destroy(); }
+    } catch (error) {
+      const code = (error as BusinessError).code;
+      const safeCode = Number.isSafeInteger(code) ? code : 0;
+      call.rejectMessage('HARMONY_HTTP_' + safeCode, 'HARMONY_HTTP_' + safeCode);
+    } finally { client?.destroy(); }
   }
 }
 

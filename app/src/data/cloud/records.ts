@@ -1,4 +1,4 @@
-import { numberOf } from '../ha/measurements.ts';
+import { numberOf, position } from '../ha/measurements.ts';
 import type { Charge, Frame, Reading } from '../ha/measurements.ts';
 import type { CarState } from '../types.ts';
 import { socPercent } from '../vehicleEnergy.ts';
@@ -21,21 +21,27 @@ export function energyParts(data: Record<string, unknown>) {
   return { drive, climate, other, total: total !== null && Number.isFinite(total) ? total : null };
 }
 
-export function officialCharge(row: Record<string, unknown>): Charge | null {
+export function officialCharge(row: Record<string, unknown>, includeLocation = false): Charge | null {
   const start = numberOf(row.chargeGunStartTs), end = numberOf(row.chargeGunEndTs);
   if (start === null || end === null || start < 1e12 || !(end > start)) return null;
   const type = String(row.chargeType ?? '').trim().toUpperCase();
   const energy = numberOf(row.chargeInEnergy);
   const kwh = energy !== null && energy >= 0 ? energy : null;
+  // The charging history response does not specify a coordinate system.
+  const point = includeLocation && position(numberOf(row.chargeStartLatitude), numberOf(row.chargeStartLongitude), start, 'unknown');
   return { id: 'official-' + start + '-' + end, source: 'live', startedAt: start, endedAt: end,
     kwh, gridKwh: null, type: type === 'SLOW' || type === '1' ? 'ac' : type === 'QUICK' || type === '2' ? 'dc' : 'unknown',
-    partial: kwh === null, powers: [], socStart: null, socEnd: null, cost: null,
+    partial: kwh === null, powers: [], socStart: null, socEnd: null, cost: null, ...(point ? { position: point } : {}),
     ...(kwh === null ? {} : { energyBasis: 'official' as const }) };
+}
+
+export function validFrameTime(at: number | null | undefined, now = Date.now()): at is number {
+  return typeof at === 'number' && Number.isFinite(at) && at > 0 && now - at <= 90_000 && at <= now + 60_000;
 }
 
 export function cloudFrame(state: CarState, location: boolean, now = Date.now()): Frame | null {
   const at = state.reportedAt;
-  if (!at || now - at > 90_000 || at > now + 60_000) return null;
+  if (!validFrameTime(at, now)) return null;
   const { latitude: lat, longitude: lon } = state;
   const position: Reading['position'] = location && typeof lat === 'number' && typeof lon === 'number' &&
     Math.abs(lat) <= 90 && Math.abs(lon) <= 180 && (lat !== 0 || lon !== 0) ? { at, lat, lon, coordinate: 'gcj02' } : null;
@@ -49,9 +55,35 @@ export function cloudFrame(state: CarState, location: boolean, now = Date.now())
 export function appendCloudFrame(previous: Frame[], frame: Frame): Frame[] {
   const last = previous.at(-1);
   if (last && last.at >= frame.at) return previous;
-  const gap = !!last && frame.at - last.at > 90_000;
+  const gap = !frame.chargeOnly && !!last && frame.at - last.at > 90_000;
   const idle = (f: Frame | undefined) => f?.data.motion === 'parked' && ['done', 'plugged', 'unplugged'].includes(String(f.data.charge));
-  const history = !gap && idle(previous.at(-2)) && idle(last) && idle(frame) ? previous.slice(0, -1) : previous;
+  const history = !gap && last?.chargeOnly === frame.chargeOnly && idle(previous.at(-2)) && idle(last) && idle(frame) ? previous.slice(0, -1) : previous;
   return [...history.filter(f => f.at >= frame.at - 90 * DAY),
     ...(gap ? [{ at: last!.at + 1, data: {}, changed: [] }] : []), frame].slice(-40_000);
+}
+
+// The native queue can replay a committed batch, or deliver it behind newer foreground charge samples.
+export function mergeTripFrames(previous: Frame[], batch: Frame[]): Frame[] {
+  const rows = new Map<number, Frame>();
+  const boundaries = new Map<number, Frame>();
+  for (const frame of [...previous, ...batch]) {
+    if (frame.tripBoundary) boundaries.set(frame.at, frame);
+    else if (frame.changed.length && (!frame.chargeOnly || !rows.has(frame.at))) rows.set(frame.at, frame);
+  }
+  const sorted = [...rows.values(), ...boundaries.values()].sort((a, b) => a.at - b.at || Number(!!b.tripBoundary) - Number(!!a.tripBoundary));
+  const result: Frame[] = [];
+  let lastTrip: Frame | undefined;
+  const cutoff = (sorted.at(-1)?.at ?? 0) - 90 * DAY;
+  for (const frame of sorted) {
+    if (frame.at < cutoff) continue;
+    if (frame.tripBoundary) lastTrip = undefined;
+    else if (!frame.chargeOnly) {
+      if (lastTrip && frame.at - lastTrip.at > 90_000) {
+        result.push({ at: lastTrip.at + 1, data: {}, changed: [] });
+      }
+      lastTrip = frame;
+    }
+    result.push(frame);
+  }
+  return result.sort((a, b) => a.at - b.at).slice(-40_000);
 }

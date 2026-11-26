@@ -2,7 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { runInNewContext } from 'node:vm';
 import { correctedC01Viewer, needsC01Viewer } from '../src/data/cloud/c01Viewer.ts';
-import { diagnosticCsv, diagnosticFamily, diagnosticRuns, diagnosticYear, modelFinding, startModelTrace, viewerDiagnosticStep } from '../src/data/modelDiagnostics.ts';
+import { diagnosticText, diagnosticCsv, diagnosticFamily, diagnosticRuns, diagnosticYear, modelFinding, startModelTrace, viewerDiagnosticStep } from '../src/data/modelDiagnostics.ts';
 
 test('both affected C01 builds load the variant table and forward queued callbacks before loading the node', () => {
   const hashes = [
@@ -52,6 +52,11 @@ test('reports distinguish cloud, viewer and missing-callback failures and exclud
   const csv = diagnosticCsv({ version: '0.1.0' }, diagnosticRuns(scope));
   assert.match(csv, /"load_2"/);
   assert.doesNotMatch(csv, /private/);
+  const txt = diagnosticText({ version: '0.1.0' }, diagnosticRuns(scope));
+  assert.match(txt, /^\uFEFFLeapMore 诊断报告\r\n/);
+  assert.match(txt, /车模检测 2/);
+  assert.match(txt, /收到素材清单/);
+  assert.doesNotMatch(txt, /private/);
   assert.equal(diagnosticRuns('other-vehicle').length, 0);
   startModelTrace(scope); startModelTrace(scope);
   log('ready');

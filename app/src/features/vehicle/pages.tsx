@@ -1,55 +1,14 @@
+import { TimePicker } from '../../ui/Picker';
 import { useState } from 'react';
-import { AppBar, Hint, Row, Section, Seg, stamp, Switch, value } from '../../ui/components';
+import { AppBar, Hint, Section, Seg, stamp, Switch, value } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
 import { useModelContext } from '../context';
+import { ManualTripCard } from '../records/ManualTripCard';
 import { ControlNotice } from './commands';
 import { CabinHeatingRows, chargeLabels, useVehicleControls } from './controls';
-import { Tires } from './Home';
 import { BatteryPreheat } from './BatteryPreheat';
 import { useChargingConfig } from './chargeSchedules';
 import { repeatLabel, WeekdaySelector } from './WeekdaySelector';
-
-export function VehicleControl() {
-  const { current, simulated, tireRange, tireAlerts } = useModelContext();
-  const c = useVehicleControls();
-  const [tires, showTires] = useState(false);
-  const block = !!c.reason('climate');
-  const s = c.settings;
-  const abnormalTires = tireAlerts.some(Boolean);
-  const normalTires = current.tires.length === 4 && current.tires.every(x => x !== null) && !abnormalTires;
-  return <><AppBar title="车辆控制" back="/home" sub={simulated ? '更新于 今天 20:35' : current.at ? '更新于 ' + stamp(current.at) : undefined} /><div className="page no-nav">
-    <ControlNotice />
-    <Section title={<>胎压 {normalTires && <span className="pill green">正常</span>}{abnormalTires && <span className="pill warn">异常</span>}
-      <button className="link push" onClick={() => showTires(true)}>查看</button></>}>
-      <div className="tpms">{['左前', '右前', '左后', '右后'].map((label, i) => <div className="tire" data-pressure-alert={tireAlerts[i] || undefined} key={label}><span>{label}</span><b className="num">{value(current.tires[i])}</b><small>kPa</small></div>)}</div>
-      <div className="tiny muted">冷胎胎压 · {tireRange.min}–{tireRange.max} kPa</div>
-    </Section>
-    <Section title="车门与车窗">
-      <Row icon="lock" title="车门锁" right={c.locked === null ? '—' : c.locked ? '已锁' : '未锁'} onClick={c.lock} disabled={!!c.reason('lock')} />
-      <Row icon={c.trunk ? 'tailgateOpen' : 'tailgate'} title="后备箱" right={c.trunk === null ? '—' : c.trunk ? '已开' : '已关'} onClick={c.toggleTrunk} disabled={block} />
-      <Row icon={c.window.icon} title="车窗" right={c.windowPosition === 'unknown' ? '—' : c.window.status} onClick={() => c.setSheet('windows')} disabled={block} />
-      <Row icon={c.shadeOpen ? 'roofShadeOpen' : 'roofShade'} title="遮阳帘" right={c.shadeOpen === null ? '—' : c.shadeOpen ? '已开' : '已关'} onClick={c.shade} disabled={block} />
-    </Section>
-    <Section title="空调与舒适">
-      <Row icon="fan" title="空调" right={c.climateOn === null ? '—' : c.climateOn ? '开' : '关'} to="/climate" />
-      {c.climate.seat >= 0 && <Row icon="seat" title="主驾座椅加热" right={c.climate.seat || '关'} disabled={block} onClick={() => c.setSheet('seat')} />}
-      {c.climate.vent >= 0 && <Row icon="wind" title="主驾座椅通风" right={c.climate.vent || '关'} disabled={block} onClick={() => c.setSheet('seat')} />}
-      <CabinHeatingRows />
-    </Section>
-    <Section title="充电">
-      <Row icon="bolt" title="充电上限" right={simulated ? s.limit + '%' : '—'} to="/charging" />
-      <Row icon="battery" title="健康充电" right={simulated ? s.health ? '开' : '关' : current.healthCharging === null ? '—' : current.healthCharging ? '开' : '关'} to="/charging" />
-      <Row icon="clock" title="预约充电" right={simulated ? s.schedule ? '开' : '关' : undefined} to="/charging" />
-    </Section>
-    <Section title="更多">
-      {current.powertrain === 'reev' && <Row icon="fuel" title="燃油续航" right={value(current.fuelRange) + ' km'} />}
-      <Row icon="find" title="鸣笛寻车" sub="闪灯 + 鸣笛" onClick={c.find} disabled={block} />
-      <Row icon="shield" title="哨兵模式" right="按车辆与账号权限" disabled />
-      <Row icon="file" title="OTA 升级" right="按车辆" disabled />
-    </Section>
-    {tires && <Tires close={() => showTires(false)} />}
-  </div></>;
-}
 
 const modes = [['cool', '制冷'], ['heat', '制热'], ['vent', '通风'], ['def', '除霜']] as const;
 const speeds = [1, 2, 3, 4, 5].map(i => [i, i] as const);
@@ -138,6 +97,7 @@ export function ChargingPage() {
             {temperature.heating && <small>上报时加热中</small>}</> :
             <b className="missing-reading">暂无读数</b>}</div>
       </div></div></div>
+    <ManualTripCard charging />
     <Section title="充电上限">
       <div className="charge-limit"><input className="slide" type="range" min="50" max="100" step="5" value={shownLimit ?? 50}
         aria-label="充电上限" aria-valuetext={shownLimit === null ? '未知' : shownLimit + '%'} disabled={blocked || storedLimit === null} onChange={e => setLimit(e.target.valueAsNumber)}
@@ -150,8 +110,8 @@ export function ChargingPage() {
         <Switch checked={schedule.schedule === true} label="预约充电" disabled={scheduleDisabled}
           action={() => setSchedule({ ...draftSchedule, schedule: !schedule.schedule })} />}</div>
       {schedule.schedule && <>
-        <div className="schedule-grid"><label>开始<input type="time" value={schedule.start} disabled={scheduleDisabled} onChange={e => setSchedule({ ...draftSchedule, start: e.target.value })} /></label>
-          <label>结束<input type="time" value={schedule.end} disabled={scheduleDisabled} onChange={e => setSchedule({ ...draftSchedule, end: e.target.value })} /></label></div>
+        <div className="schedule-grid"><label>开始<TimePicker aria-label="开始" value={schedule.start} disabled={scheduleDisabled} onValue={v => setSchedule({ ...draftSchedule, start: v })} /></label>
+          <label>结束<TimePicker aria-label="结束" value={schedule.end} disabled={scheduleDisabled} onValue={v => setSchedule({ ...draftSchedule, end: v })} /></label></div>
         <WeekdaySelector days={schedule.days} label="充电重复日期" disabled={scheduleDisabled} change={days => setSchedule({ ...draftSchedule, days })} />
       </>}
       {(schedule.schedule || scheduleChanged) && <button className="btn secondary sm" disabled={!scheduleChanged || scheduleDisabled ||

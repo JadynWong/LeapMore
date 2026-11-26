@@ -1,4 +1,4 @@
-import { createContext, useContext, useEffect, useRef, useState } from 'react';
+import { createContext, useContext, useEffect, useLayoutEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link, useMatch } from 'react-router-dom';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
@@ -9,16 +9,17 @@ import type { IconName } from '../../ui/Icon';
 import { CloudSessionExpired } from '../../data/cloud/LiveClient';
 import { matchesRemoteState, OperationPinRejected, RemoteCommandError } from '../../data/cloud/remote';
 import type { RemoteCommand } from '../../data/cloud/remote';
+import { confirmsPreparation, permitsCommand, preparationKey } from '../../data/cloud/preparation';
 import { allowsPreheat, preheatSchedulesKey, samePreheatPlan } from '../../data/cloud/preheat';
 import { biometricAvailabilityKey, defaultOperationAuth, forgetOperationPin, operationAuth, operationAuthKey, readOperationPin, rememberOperationPin, validOperationPin } from '../../platform/operationAuth';
 import type { OperationMode } from '../../platform/operationAuth';
 import { biometricsAvailable } from '../../platform/secure';
 
 export type Command = { kind: RemoteCommand['kind']; title: string; description?: string; icon: IconName;
-  remote?: RemoteCommand; apply?: () => void; onComplete?: () => void };
+  stillRequested?: () => boolean; remote?: RemoteCommand; apply?: () => void; onComplete?: () => void };
 const status = {
   sending: '正在发送', accepted: '云端已受理', waiting: '等待车辆确认',
-  confirmed: '操作成功 · 车端已确认', saved: '云端充电计划已更新', preheatSaved: '云端预热预约已更新',
+  confirmed: '操作成功 · 车端已确认', saved: '云端充电计划已更新', preheatSaved: '云端预热预约已更新', preparationSaved: '预约备车已更新',
   unconfirmed: '车辆未确认', failed: '指令发送失败',
 } as const;
 type Step = keyof typeof status;
@@ -37,6 +38,7 @@ function useCommandModel(onClose?: () => void) {
   const qc = useQueryClient();
   const scope = model.operationScope;
   const widgetLink = useMatch('/widget-action');
+  const quickLink = useMatch('/quick-action');
   const auth = useQuery({ queryKey: operationAuthKey(scope), enabled: !!scope, queryFn: () => operationAuth(scope), staleTime: Infinity });
   const biometrics = useQuery({ queryKey: biometricAvailabilityKey, enabled: !!scope, queryFn: biometricsAvailable, staleTime: 0 });
   const latest = useRef(model);
@@ -64,7 +66,7 @@ function useCommandModel(onClose?: () => void) {
     timers.current = [];
   };
   useEffect(() => clear, []);
-  useEffect(() => {
+  useLayoutEffect(() => {
     const before = session.current;
     if (before.scope === scope && before.vehicle === vehicle && before.mode === model.mode) return;
     session.current = { scope, vehicle, mode: model.mode };
@@ -78,13 +80,15 @@ function useCommandModel(onClose?: () => void) {
     if (m.scenario === 'offline') return [m.simulated ? '网络不可用，显示缓存车况' : m.stateFailure + (m.current.at ? '，显示上次车况' : '，暂无车况'), '/states', '查看诊断'] as const;
     if (m.current.driving) return ['行驶中，停车挂 P 后可控车', '/driving-lock', '查看原因'] as const;
     if (kind !== 'lock' && !m.canSee('control')) return ['车辆控制未授权', '/vehicle-access', '查看车辆授权'] as const;
+    if (kind === 'sentry' && (!m.simulated && (!m.vehicle.boundOwner || !permitsCommand(m.vehicle, 400)))) return ['仅主账号可使用哨兵模式', '/vehicle-access', '查看车辆授权'] as const;
+    if ((kind === 'prepare' || kind === 'prepareSchedule') && !permitsCommand(m.vehicle, kind === 'prepare' ? 360 : 361)) return ['备车功能未授权', '/vehicle-access', '查看车辆授权'] as const;
     if (kind === 'preheat' && !allowsPreheat(m.vehicle)) return ['电池预热预约未授权', '/vehicle-access', '查看车辆授权'] as const;
     if (kind === 'navigation' && !m.canSee('location')) return ['车辆定位未授权', '/vehicle-access', '查看车辆授权'] as const;
     if (!m.simulated && !m.client) return ['当前车况为只读接入', '/states', '查看状态'] as const;
     return null;
   }
   async function ask(next: Command) {
-    if (operation.current || !sameVehicle()) return;
+    if (operation.current || !sameVehicle() || next.stillRequested && (command || !next.stillRequested())) return;
     const blocked = reason(next.kind);
     if (blocked) { latest.current.setToast(blocked[0]); return; }
     if (!latest.current.simulated && !next.remote) return;
@@ -103,9 +107,10 @@ function useCommandModel(onClose?: () => void) {
     const prefs = await qc.fetchQuery({ queryKey: operationAuthKey(scope), queryFn: () => operationAuth(scope),
       staleTime: 0, retry: false, networkMode: 'always' }).catch(() => null);
     if (controller.signal.aborted || !sameVehicle()) return;
+    if (next.stillRequested && !next.stillRequested()) { close(); return; }
     setCommand(next);
     // Public widget URLs open a review sheet. Opening a URL alone is not a control-button tap.
-    if (!widgetLink && prefs?.mode === 'instant' && prefs.saved) {
+    if (!widgetLink && !quickLink && prefs?.mode === 'instant' && prefs.saved) {
       setStep('sending');
       await authorizeSend(next, controller, 'saved', prefs.mode);
     } else {
@@ -115,7 +120,7 @@ function useCommandModel(onClose?: () => void) {
   }
   function close() { clear(); setPin(''); setStep(null); setCommand(null); setVerifying(false); onClose?.(); }
   const after = (delay: number, action: () => void) => timers.current.push(setTimeout(action, delay));
-  function complete(next: Command, step: 'confirmed' | 'saved' | 'preheatSaved') {
+  function complete(next: Command, step: 'confirmed' | 'saved' | 'preheatSaved' | 'preparationSaved') {
     next.onComplete?.();
     setStep(step);
     after(880, close);
@@ -128,7 +133,10 @@ function useCommandModel(onClose?: () => void) {
     const submit = async (force: boolean) => {
       const client = await m.controlClient(force);
       signal.throwIfAborted();
-      const receipt = await client.sendCommand(m.vehicleId, remote, password, signal, () => { submitted = true; },
+      const receipt = await client.sendCommand(m.vehicleId, remote, password, signal, () => {
+        if (next.stillRequested && !next.stillRequested()) throw new RemoteCommandError('本次哨兵检查已结束。');
+        submitted = true;
+      },
         !saved ? async () => {
           try {
             const prefs = await rememberOperationPin(scope, authMode, password);
@@ -152,25 +160,32 @@ function useCommandModel(onClose?: () => void) {
         const timer = setTimeout(finish, delay);
         signal.addEventListener('abort', finish, { once: true });
       });
-      if (receipt.preheatTarget) {
-        const target = receipt.preheatTarget;
+      if (receipt.preheatTarget || receipt.preparationTarget) {
+        const preparation = receipt.preparationTarget;
+        const key = preparation ? preparationKey(m.cloudKey) : preheatSchedulesKey(m.cloudKey);
+        const readBack = async () => {
+          if (preparation) {
+            const plans = await client.getPreparationSchedules(m.vehicleId, 6_000);
+            signal.throwIfAborted();
+            qc.setQueryData(key, plans);
+            return confirmsPreparation(plans, preparation);
+          }
+          const plans = await client.getPreheatSchedules(m.vehicleId, 6_000);
+          signal.throwIfAborted();
+          qc.setQueryData(key, plans);
+          const target = receipt.preheatTarget!;
+          return plans.some(plan => plan.id === target.id && samePreheatPlan(plan, target));
+        };
         for (const delay of [1_600, 4_000, 8_000]) {
           await wait(delay);
           signal.throwIfAborted();
-          const [result, plans] = await Promise.all([
-            client.queryCommand(receipt).catch(() => 'pending'),
-            client.getPreheatSchedules(m.vehicleId, 6_000).catch(() => null),
-          ]);
+          const [result, matched] = await Promise.all([client.queryCommand(receipt).catch(() => 'pending'), readBack().catch(() => false)]);
           signal.throwIfAborted();
-          if (result === 'failed') throw new RemoteCommandError('车辆未能保存电池预热预约。');
-          if (plans?.some(plan => plan.id === target.id && samePreheatPlan(plan, target))) {
-            qc.setQueryData(preheatSchedulesKey(m.cloudKey), plans);
-            complete(next, 'preheatSaved');
-            return;
-          }
+          if (result === 'failed') throw new RemoteCommandError('车辆未能保存预约。');
+          if (matched) { complete(next, preparation ? 'preparationSaved' : 'preheatSaved'); return; }
         }
-        void qc.invalidateQueries({ queryKey: preheatSchedulesKey(m.cloudKey) });
-        setMessage('云端已受理，暂未读到一致的预热预约。');
+        void qc.invalidateQueries({ queryKey: key });
+        setMessage('云端已受理，暂未读到一致的预约。');
         setStep('unconfirmed');
         return;
       }
@@ -222,6 +237,7 @@ function useCommandModel(onClose?: () => void) {
         if (signal.aborted) return;
       }
       if (error instanceof CloudSessionExpired) m.expireCloud();
+      if (remote.kind === 'prepareSchedule') void qc.invalidateQueries({ queryKey: preparationKey(m.cloudKey) });
       if (remote.kind === 'preheat') void qc.invalidateQueries({ queryKey: preheatSchedulesKey(m.cloudKey) });
       const known = error instanceof RemoteCommandError || error instanceof CloudSessionExpired;
       if (submitted && !accepted && !known) {
@@ -261,6 +277,7 @@ function useCommandModel(onClose?: () => void) {
   }
   function send(method: AuthMethod = useSaved ? 'saved' : 'password') {
     if (!command || step || operation.current) return;
+    if (command.stillRequested && !command.stillRequested()) { close(); return; }
     const blocked = reason(command.kind);
     if (blocked) { setMessage(blocked[0]); setStep('failed'); return; }
     const simulation = latest.current.simulated;
@@ -273,9 +290,10 @@ function useCommandModel(onClose?: () => void) {
     }
     setStep('sending');
     const confirm = () => {
+      if (command.stillRequested && !command.stillRequested()) { close(); return; }
       if (latest.current.scenario === 'pending' || reason(command.kind)) { setStep('unconfirmed'); return; }
       command.apply?.();
-      complete(command, command.kind === 'preheat' ? 'preheatSaved' : 'confirmed');
+      complete(command, command.kind === 'prepareSchedule' ? 'preparationSaved' : command.kind === 'preheat' ? 'preheatSaved' : 'confirmed');
     };
     after(450, () => {
       setStep('accepted');
@@ -289,6 +307,14 @@ function useCommandModel(onClose?: () => void) {
     try {
       if (m.client && !m.simulated) {
         const client = await m.controlClient();
+        if (command?.kind === 'prepareSchedule') {
+          const plans = await client.getPreparationSchedules(m.vehicleId);
+          if (signal?.aborted) return;
+          qc.setQueryData(preparationKey(m.cloudKey), plans);
+          m.setToast('已重新读取预约备车');
+          close();
+          return;
+        }
         if (command?.kind === 'preheat') {
           const plans = await client.getPreheatSchedules(m.vehicleId);
           if (signal?.aborted) return;
@@ -327,13 +353,13 @@ export function CommandProvider({ children, onClose }: { children: ReactNode; on
   const model = useModelContext();
   const { command: c, step, send, close } = run;
   return <Context.Provider value={run}>{children}{c && (step ?
-    <Sheet title={c.title} className="cmd-sheet" decorated={false} state={step === 'saved' || step === 'preheatSaved' ? 'confirmed' : step} close={step === 'unconfirmed' || step === 'failed' ? close : undefined}>
+    <Sheet title={c.title} className="cmd-sheet" decorated={false} state={step === 'saved' || step === 'preheatSaved' || step === 'preparationSaved' ? 'confirmed' : step} close={step === 'unconfirmed' || step === 'failed' ? close : undefined}>
       <div className="cmd-circle" aria-hidden="true"><span className="cmd-track" /><span className="cmd-spin" />
         <span className="cmd-symbol cmd-source"><Icon name={c.icon} size={26} /></span><span className="cmd-symbol cmd-check"><Icon name="check" size={32} /></span>
         <span className="cmd-symbol cmd-alert"><Icon name="alert" size={27} /></span><span className="cmd-symbol cmd-error"><Icon name="x" size={30} /></span>
       </div><h2>{c.title}</h2><p className="cmd-status" role="status">{run.message || status[step]}</p>
       {step === 'unconfirmed' || step === 'failed' ? <div className="confirm-btns"><button className="btn ghost" onClick={close}>关闭</button>
-        {step === 'unconfirmed' && <button className="btn accent" onClick={() => void run.check()} disabled={run.checking}>{c.kind === 'preheat' ? '查询预约' : '查询车况'}</button>}</div> : null}
+        {step === 'unconfirmed' && <button className="btn accent" onClick={() => void run.check()} disabled={run.checking}>{c.kind === 'preheat' || c.kind === 'prepareSchedule' ? '查询预约' : '查询车况'}</button>}</div> : null}
     </Sheet> :
     <Sheet title={'确认' + c.title + '？'} close={close} decorated={false} className="confirm-sheet">
       <div className="grabber" /><div className="confirm-head"><div className="confirm-ic"><Icon name={c.icon} size={22} /></div>

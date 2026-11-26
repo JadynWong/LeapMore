@@ -19,12 +19,15 @@ export default defineConfig(({ mode }) => {
       name: 'leapmore-public-assets',
       apply: 'build',
       closeBundle() {
-        for (const folder of ['assets', 'viewer', ...(env.LEAPMORE_LOCAL_3D_DEMO === '1' ? ['car3d-demo'] : [])]) {
-          const from = resolve(import.meta.dirname, 'public', folder);
+        const files = ['manifest.webmanifest', 'viewer/isolated.js', 'viewer/view.js', 'viewer/view.html',
+          ...['leaplink-icon.png', 'leaplink-icon-simple.png', 'leaplink-lockup.png', 'wechat-reward-qr.png'].map(name => 'assets/' + name)];
+        if (env.LEAPMORE_LOCAL_CAR_ASSETS === '1') files.push(...['b10', 'c10', 'hero-day', 'hero-night'].map(name => 'assets/' + name + '.png'));
+        if (env.LEAPMORE_LOCAL_3D_DEMO === '1') files.push('car3d-demo');
+        for (const file of files) {
+          const from = resolve(import.meta.dirname, 'public', file);
           if (!existsSync(from)) continue;
-          cpSync(from, resolve(import.meta.dirname, 'dist', folder), { recursive: true, dereference: true,
-            filter: source => !/[/\\](\.DS_Store|skybox_night_starry\.jpg)$/.test(source) &&
-              (env.LEAPMORE_LOCAL_CAR_ASSETS === '1' || !/[/\\](b10|c10|hero-day|hero-night)\.png$/.test(source)),
+          cpSync(from, resolve(import.meta.dirname, 'dist', file), { recursive: true, dereference: true,
+            filter: source => !/[/\\](\.DS_Store|skybox_night_starry\.jpg)$/.test(source),
           });
         }
       },

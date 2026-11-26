@@ -1,15 +1,7 @@
 import { Capacitor, CapacitorHttp } from '@capacitor/core';
 import { harmonyRequest } from '../../platform/network';
 
-export function vehicleServiceOrigin(value: unknown) {
-  if (typeof value !== 'string' || !value) return null;
-  try {
-    const url = new URL(value);
-    if (url.protocol !== 'https:' || !/\.leapmotor\.(com|cn)$/.test(url.hostname)
-      || url.username || url.password || url.port || url.pathname !== '/' || url.search || url.hash) return null;
-    return url.origin;
-  } catch { return null; }
-}
+export { vehicleServiceOrigin } from './vehicleOrigin';
 
 function decodeBase64(data: string): ArrayBuffer {
   const bytes = atob(data);
@@ -33,7 +25,7 @@ export async function requestJson(method: string, url: string, init: {
   timeoutMs?: number;
 } = {}): Promise<Record<string, unknown>> {
   if (Capacitor.getPlatform() === 'openharmony') {
-    const reply = await harmonyRequest({ url, method, headers: init.headers ?? {}, body: init.body });
+    const reply = await harmonyRequest({ url, method, headers: init.headers ?? {}, body: init.body, probe: init.probe, timeoutMs: init.timeoutMs });
     return parseBody(reply.data, reply.status);
   }
   if (Capacitor.isNativePlatform()) {
@@ -52,7 +44,7 @@ export async function requestJson(method: string, url: string, init: {
 
 export async function requestBinary(url: string, init: { headers?: Record<string, string>; timeoutMs?: number; onStatus?: (status: number) => void } = {}): Promise<ArrayBuffer> {
   if (Capacitor.getPlatform() === 'openharmony') {
-    const reply = await harmonyRequest({ url, method: 'GET', headers: init.headers ?? {}, binary: true });
+    const reply = await harmonyRequest({ url, method: 'GET', headers: init.headers ?? {}, binary: true, timeoutMs: init.timeoutMs ?? 120_000 });
     init.onStatus?.(reply.status);
     if (reply.status !== 200 || !reply.data) throw new Error('无法下载车模资源');
     return decodeBase64(reply.data);

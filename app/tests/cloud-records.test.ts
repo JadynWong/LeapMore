@@ -1,8 +1,8 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { appendCloudFrame, cloudDay, cloudFrame, dayStart, energyParts, officialCharge } from '../src/data/cloud/records.ts';
+import { appendCloudFrame, cloudDay, cloudFrame, dayStart, energyParts, officialCharge, mergeTripFrames } from '../src/data/cloud/records.ts';
 import { CloudRateLimited, VehiclePolling, vehicleRateLimited } from '../src/data/cloud/polling.ts';
-import { deriveTrips, framesOf } from '../src/data/ha/measurements.ts';
+import { deriveTrips, framesOf, withChargePositions } from '../src/data/ha/measurements.ts';
 import type { Frame, Reading } from '../src/data/ha/measurements.ts';
 import type { CarState } from '../src/data/types.ts';
 import { reconcileCharges, sampledCharges } from '../src/data/cloud/charges.ts';
@@ -113,6 +113,18 @@ test('Charge sampling retains charge curves, uses SOC, and combines official ene
   assert.equal(reconcileCharges([{ ...known, type: 'dc' }], [], parts)[0].gridKwh, 120 / 95);
 });
 
+test('an explicit charging report is recorded without motion telemetry; a driving report still ends it', () => {
+  const reports = [chargeFrame(0, 'plugged', 40), chargeFrame(60, 'charging', 40, 6),
+    chargeFrame(360, 'charging', 41, 6), chargeFrame(420, 'charging', 42, 6)];
+  for (const frame of reports) frame.data.motion = null;
+  reports[3].data.motion = 'driving';
+  const [charge] = sampledCharges(reports, 50, start + 430_000);
+  assert.equal(charge.startedAt, reports[1].at);
+  assert.equal(charge.endedAt, reports[2].at);
+  assert.equal(charge.kwh, 0.5);
+  assert.equal(charge.active, false);
+});
+
 test('Unknown charging state and long gaps never add unobserved SOC to charging energy', () => {
   const frames = [chargeFrame(0, 'unplugged', 40), chargeFrame(60, 'charging', 40),
     chargeFrame(120, 'charging', 42), chargeFrame(1200, 'charging', 60), chargeFrame(1260, 'charging', 61)];
@@ -203,6 +215,30 @@ test('Official charging exposes the measured session without sampled detail', ()
   assert.deepEqual(official.powers, []);
 });
 
+test('Charging coordinates respect location grants and invalid or missing values', () => {
+  const row = { chargeGunStartTs: start, chargeGunEndTs: start + 120_000, chargeStartLatitude: '31.2', chargeStartLongitude: '121.5' };
+  assert.equal(officialCharge(row, false)?.position, undefined);
+  assert.deepEqual(officialCharge(row, true)?.position, { at: start, lat: 31.2, lon: 121.5, coordinate: 'unknown' });
+  for (const [lat, lon] of [[0, 0], [null, 121], [100, 0], ['bad', 32], [12, 181]]) {
+    assert.equal(officialCharge({ ...row, chargeStartLatitude: lat, chargeStartLongitude: lon }, true)?.position, undefined);
+  }
+});
+
+test('A charge uses a fresh fix inside its own interval and never borrows the next session or a moving car', () => {
+  const row = officialCharge({ chargeGunStartTs: start, chargeGunEndTs: start + 60_000 })!;
+  const fix = (second: number): Frame => ({ at: start + second * 1000, changed: ['tracker'],
+    data: { position: { at: start + second * 1000, lat: 31.2, lon: 121.5, coordinate: 'wgs84' } } });
+  const stale = { ...fix(-10), at: start + 5000, changed: ['soc'] as Frame['changed'] };
+  const moving = fix(12);
+  moving.data.motion = 'driving';
+  assert.equal(withChargePositions([row], [fix(-10), stale, moving, fix(60)])[0].position, undefined);
+  const other = { ...row, startedAt: start + 60_000, endedAt: start + 90_000 };
+  const sessions = withChargePositions([other, row], [fix(-10), stale, moving, fix(30), fix(60)]);
+  assert.equal(sessions[0].position?.at, other.startedAt);
+  assert.equal(sessions[1].position?.at, start + 30_000);
+  assert.equal(withChargePositions([{ ...row, active: true, endedAt: null }], [fix(90)])[0].position, undefined);
+});
+
 test('HA tire pressures use kPa while preserving already normalized readings', () => {
   const frames = framesOf([
     { entity: 'sensor.kpa', at: start, state: '218', attrs: { unit_of_measurement: 'kPa' } },
@@ -212,4 +248,31 @@ test('HA tire pressures use kPa while preserving already normalized readings', (
   assert.equal(frames[0].data.tireFL, 218);
   assert.equal(frames[0].data.tireFR, 240);
   assert.equal(Math.round(Number(frames[0].data.tireRL)), 241);
+});
+
+test('manual trip interruption preserves distance and ends at the last saved sample, even on replay', () => {
+  const a = frame(0, { motion: 'driving', odometer: 10 });
+  const b = frame(20, { motion: 'driving', odometer: 11 });
+  const end: Frame = { at: b.at + 1, data: {}, changed: [], tripBoundary: 'interrupted' };
+  const between: Frame = { ...frame(25, { motion: 'driving', odometer: 12 }), chargeOnly: true };
+  const resumed = frame(40, { motion: 'driving', odometer: 14 });
+  const frames = mergeTripFrames([between, resumed], [a, b, end]);
+  assert.deepEqual(mergeTripFrames(frames, [a, b, end]), frames);
+  const [current, interrupted] = deriveTrips(frames, 'live');
+  assert.equal(current.startedAt, resumed.at);
+  assert.equal(interrupted.endedAt, b.at);
+  assert.equal(interrupted.distanceKm, 1);
+  assert.equal(interrupted.gap, true);
+  assert.equal(deriveTrips([between], 'live').length, 0);
+  assert.deepEqual(mergeTripFrames([{ ...a, chargeOnly: true }], [a]), [a]);
+  const parked: Frame = { ...a, data: {motion:'parked',charge:'unplugged'} };
+  assert.ok(appendCloudFrame([parked,{...parked,at:b.at}], {...parked,at:resumed.at,chargeOnly:true}).some(f=>f.at===b.at));
+});
+
+test('late native batches fill holes while retaining genuine missed intervals', () => {
+  const drive = (second: number) => frame(second, {motion:'driving'});
+  const gap = appendCloudFrame([drive(0)], drive(150));
+  assert.equal(deriveTrips(gap, 'live').length, 2);
+  assert.equal(deriveTrips(mergeTripFrames(gap,[drive(75)]), 'live').length, 1);
+  assert.equal(deriveTrips(mergeTripFrames(gap,[{...drive(75),chargeOnly:true}]), 'live').length, 2);
 });

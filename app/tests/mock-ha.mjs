@@ -216,7 +216,7 @@ wss.on('connection', socket => {
       }
       if (msg.type === 'leapmotor/energy/daily') {
         totals.energy++;
-        return ok({ vin, pending: 0, days: [{ day: new Date(at).toISOString().slice(0, 10), km: 17.5, kwh: 4.2, drv: 3.1, ac: .9, oth: .2 }] });
+        return ok({ vin, pending: 0, days: [{ day: new Intl.DateTimeFormat('sv-SE').format(new Date(at)), km: 17.5, kwh: 4.2, drv: 3.1, ac: .9, oth: .2 }] });
       }
       if (msg.type === 'leapmotor/charging/records/v1') {
         if (fail === 'limited') return error('unauthorized');

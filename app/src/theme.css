@@ -951,8 +951,6 @@ html[data-theme="dark"] .widget-caption { color: #e1eaf8; }
 .rchip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: 999px; background: rgba(255, 255, 255, 0.55); color: #24323c; font-size: 10.5px; white-space: nowrap; }
 html[data-theme="dark"] .rchip { background: rgba(255, 255, 255, 0.12); color: var(--text); }
 
-.btn.logout { background: var(--card-2); color: var(--error); border: 1px solid rgba(219, 68, 55, 0.22); box-shadow: none; }
-.btn.logout:hover { background: rgba(219, 68, 55, 0.08); }
 .appbar-action { display: inline-flex; align-items: center; gap: 5px; height: 32px; padding: 0 11px; border: 0; border-radius: 999px; background: var(--card); box-shadow: var(--shadow-card); color: var(--text); font: inherit; font-size: 11.5px; cursor: pointer; flex: none; }
 .appbar-action svg { color: var(--text2); }
 
@@ -984,7 +982,6 @@ html[data-theme="dark"] .rchip { background: rgba(255, 255, 255, 0.12); color: v
 .screen.home-screen .sb { position: absolute; top: 0; left: 0; right: 0; z-index: 11; background: transparent; }
 html[data-theme="dark"] .screen.home-screen .sb { background: transparent; }
 
-html[data-theme="dark"] .btn.logout { background: var(--card-2); color: #ff8f8f; border-color: rgba(219, 68, 55, 0.32); }
 
 .screen.home-screen { background: #cdd9ec; }
 html[data-theme="dark"] .screen.home-screen { background: #1f2c47; }

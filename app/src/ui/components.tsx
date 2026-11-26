@@ -2,6 +2,8 @@ import { useId, useLayoutEffect, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import dialogPolyfill from 'dialog-polyfill';
+import { App as NativeApp } from '@capacitor/app';
+import { Capacitor, type PluginListenerHandle } from '@capacitor/core';
 import { Link } from 'react-router-dom';
 import { Icon } from './Icon';
 import type { IconName } from './Icon';
@@ -47,6 +49,25 @@ export function Seg<T extends string | number>({ options, current, choose, label
   )}</div>;
 }
 
+const androidDialogs = new Set<HTMLDialogElement>();
+let backListener: Promise<PluginListenerHandle> | undefined;
+
+function handleAndroidDialogBack(node: HTMLDialogElement) {
+  if (Capacitor.getPlatform() !== 'android' || document.documentElement.classList.contains('widget-control-window')) return;
+  androidDialogs.add(node);
+  backListener ??= NativeApp.addListener('backButton', () => {
+    const top = Array.from(androidDialogs).at(-1);
+    top?.dispatchEvent(new Event('cancel', { cancelable: true }));
+  });
+  return () => {
+    androidDialogs.delete(node);
+    if (androidDialogs.size === 0) {
+      void backListener?.then(listener => listener.remove()).catch(() => {});
+      backListener = undefined;
+    }
+  };
+}
+
 export function Sheet({ title, sub, children, close, showClose, className = '', decorated = true, dismissOnBackdrop = true, state }: {
   title: string; sub?: string; children: ReactNode; close?: () => void; showClose?: boolean; className?: string;
   decorated?: boolean; dismissOnBackdrop?: boolean; state?: string;
@@ -57,10 +78,11 @@ export function Sheet({ title, sub, children, close, showClose, className = '', 
     const node = dialog.current!;
     dialogPolyfill.registerDialog(node);
     node.showModal();
-    return () => { if (node.open) node.close(); };
+    const releaseBack = handleAndroidDialogBack(node);
+    return () => { releaseBack?.(); if (node.open) node.close(); };
   }, []);
   const sheet = <dialog className={'app-dialog scrim' + (className.includes('cmd-sheet') ? ' cmd-scrim' : '')}
-    ref={dialog} aria-labelledby={id} onCancel={e => { e.preventDefault(); close?.(); }} onClick={e => { if (dismissOnBackdrop && e.target === e.currentTarget) close?.(); }}>
+    ref={dialog} aria-labelledby={id} onCancel={e => { e.preventDefault(); e.stopPropagation(); close?.(); }} onClick={e => { if (dismissOnBackdrop && e.target === e.currentTarget) close?.(); }}>
     <section className={'sheet ' + className} data-step={state}>
       {decorated && <div className="grabber" />}
       {showClose && close ? <header className="sheet-heading"><div>

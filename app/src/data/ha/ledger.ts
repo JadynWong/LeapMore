@@ -55,7 +55,7 @@ function ledgerRows<T extends { id: string }>(value: unknown, parse: (row: Row) 
 
 interface Ledger { trips: Trip[]; charges: Charge[]; lastSync: number }
 const legacyLedgerKey = (config: HAConfig, vin: string) => 'ha-ledger:' + JSON.stringify([config.url, vin, config.days]);
-const ledgerKey = (config: HAConfig, vin: string) => 'ha-ledger-v2:' + JSON.stringify([config.url, vin, config.days]);
+import { ledgerKey } from './cacheKeys';
 export const readLedger = (config: HAConfig, vin: string) => readDataset<Ledger>(ledgerKey(config, vin));
 
 export async function haChargeSessions(config: HAConfig, vin: string, days: number, signal: AbortSignal) {

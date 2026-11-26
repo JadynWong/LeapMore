@@ -11,9 +11,8 @@ export function mergeSamples(existing: Sample[], incoming: Sample[], since: numb
   }
   return [...merged.values()].sort((a, b) => a.at - b.at);
 }
-export function historyKey(config: HAConfig, vehicle: string, vin?: string) {
-  return 'entities:' + JSON.stringify(vin ? [config.url, vehicle, vin] : [config.url, vehicle]);
-}
+import { historyKey } from './cacheKeys.ts';
+export { historyKey } from './cacheKeys.ts';
 export async function syncHistory(config: HAConfig, vehicle: string, vin: string, mapping: Mapping, signal: AbortSignal) {
   const { energyRank, rankEfficiency, ...historyMapping } = mapping;
   const bindings = Object.values(historyMapping);

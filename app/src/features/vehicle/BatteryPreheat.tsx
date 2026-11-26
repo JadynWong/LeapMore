@@ -1,3 +1,4 @@
+import { Picker, TimePicker } from '../../ui/Picker';
 import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { samePreheatPlan, validPreheatTime } from '../../data/cloud/preheat';
@@ -46,13 +47,13 @@ export function BatteryPreheat() {
     </div>
     {canRead && schedules.isError && <div className="between"><span className="tiny muted" role="status">暂时无法读取已有预约。</span>
       <button type="button" className="btn secondary sm" disabled={schedules.isFetching} onClick={() => void schedules.refetch()}>重新读取</button></div>}
-    {ready && plans.length > 1 && <div className="schedule-grid preheat-time"><label>选择预约<select value={active.id} disabled={blocked}
-      onChange={e => { select(e.target.value); setDraft({}); }}>
+    {ready && plans.length > 1 && <div className="schedule-grid preheat-time"><label>选择预约<Picker aria-label="选择预约" value={active.id} disabled={blocked}
+      onValue={v => { select(v); setDraft({}); }}>
       {plans.map((plan, index) => <option key={plan.id} value={plan.id}>{index + 1} · {plan.start} · {plan.enabled ? '已开启' : '已关闭'}</option>)}
-    </select></label></div>}
+    </Picker></label></div>}
     {ready && fields.enabled && <>
-      <div className="schedule-grid"><label>预热开始时间<input type="time" value={fields.start} disabled={blocked}
-        onChange={e => setDraft({ ...draft, start: e.target.value })} /></label>
+      <div className="schedule-grid"><label>预热开始时间<TimePicker aria-label="预热开始时间" value={fields.start} disabled={blocked}
+        onValue={v => setDraft({ ...draft, start: v })} /></label>
         <div className="schedule-readonly"><span>结束时间</span><b>车辆自动结束</b></div>
       </div>
       <WeekdaySelector days={fields.days} label="预热重复日期" disabled={blocked} change={days => setDraft({ ...draft, days })} />

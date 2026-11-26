@@ -27,6 +27,7 @@ export interface HAConfig {
   days: number;
   auto: boolean;
   auth: 'oauth' | 'manual';
+  localScope?: string;
 }
 export interface Token {
   access: string;

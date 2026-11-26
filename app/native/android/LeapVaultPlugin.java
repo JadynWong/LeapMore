@@ -32,7 +32,7 @@ public class LeapVaultPlugin extends Plugin {
         return getContext().getSharedPreferences("leapmore.vault", Context.MODE_PRIVATE);
     }
 
-    private SecretKey key() throws Exception {
+    private static synchronized SecretKey key() throws Exception {
         KeyStore keys = KeyStore.getInstance("AndroidKeyStore");
         keys.load(null);
         if (keys.containsAlias(ALIAS)) return (SecretKey) keys.getKey(ALIAS, null);
@@ -49,12 +49,7 @@ public class LeapVaultPlugin extends Plugin {
         String id = call.getString("key"), value = call.getString("value");
         if (id == null || value == null) { call.reject("参数不完整"); return; }
         try {
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.ENCRYPT_MODE, key());
-            cipher.updateAAD(id.getBytes(StandardCharsets.UTF_8));
-            String encoded = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + "."
-                + Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP);
-            if (!storage().edit().putString(id, encoded).commit()) throw new IllegalStateException();
+            store(getContext(), id, value);
             call.resolve();
         } catch (Exception ignored) { call.reject("安全存储写入失败"); }
     }
@@ -67,16 +62,37 @@ public class LeapVaultPlugin extends Plugin {
     }
 
     private synchronized void read(PluginCall call, String id) {
-        String value = storage().getString(id, null);
-        if (value == null) { call.resolve(); return; }
         try {
-            String[] fragments = value.split("\\.", 2);
-            Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
-            cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(fragments[0], Base64.NO_WRAP)));
-            cipher.updateAAD(id.getBytes(StandardCharsets.UTF_8));
-            String decoded = new String(cipher.doFinal(Base64.decode(fragments[1], Base64.NO_WRAP)), StandardCharsets.UTF_8);
-            call.resolve(new JSObject().put("value", decoded));
+            String decoded = stored(getContext(), id);
+            if (decoded == null) call.resolve(); else call.resolve(new JSObject().put("value", decoded));
         } catch (Exception ignored) { call.reject("安全存储读取失败"); }
+    }
+
+    private static synchronized void store(Context context, String id, String value) throws Exception {
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.ENCRYPT_MODE, key());
+        cipher.updateAAD(id.getBytes(StandardCharsets.UTF_8));
+        String encoded = Base64.encodeToString(cipher.getIV(), Base64.NO_WRAP) + "."
+            + Base64.encodeToString(cipher.doFinal(value.getBytes(StandardCharsets.UTF_8)), Base64.NO_WRAP);
+        if (!context.getSharedPreferences("leapmore.vault", Context.MODE_PRIVATE).edit().putString(id, encoded).commit()) throw new IllegalStateException();
+    }
+
+    static synchronized boolean replaceSession(Context context, String previous, String next) {
+        try {
+            if (!previous.equals(stored(context, "leapmotor-session"))) return false;
+            store(context, "leapmotor-session", next);
+            return true;
+        } catch (Exception ignored) { return false; }
+    }
+
+    static synchronized String stored(Context context, String id) throws Exception {
+        String value = context.getSharedPreferences("leapmore.vault", Context.MODE_PRIVATE).getString(id, null);
+        if (value == null) return null;
+        String[] fragments = value.split("\\.", 2);
+        Cipher cipher = Cipher.getInstance("AES/GCM/NoPadding");
+        cipher.init(Cipher.DECRYPT_MODE, key(), new GCMParameterSpec(128, Base64.decode(fragments[0], Base64.NO_WRAP)));
+        cipher.updateAAD(id.getBytes(StandardCharsets.UTF_8));
+        return new String(cipher.doFinal(Base64.decode(fragments[1], Base64.NO_WRAP)), StandardCharsets.UTF_8);
     }
 
     @SuppressWarnings("deprecation")
@@ -126,7 +142,9 @@ public class LeapVaultPlugin extends Plugin {
     public synchronized void remove(PluginCall call) {
         String id = call.getString("key");
         if (id == null) { call.reject("参数不完整"); return; }
-        if (storage().edit().remove(id).commit()) call.resolve();
-        else call.reject("安全存储删除失败");
+        synchronized (LeapVaultPlugin.class) {
+            if (storage().edit().remove(id).commit()) call.resolve();
+            else call.reject("安全存储删除失败");
+        }
     }
 }

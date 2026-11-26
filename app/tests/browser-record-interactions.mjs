@@ -2,7 +2,7 @@ import { browser, wait } from './cdp.mjs';
 import assert from 'node:assert/strict';
 
 const app = process.env.LEAPMORE_DEMO_ORIGIN ?? 'http://127.0.0.1:5175/';
-const b = await browser(app, 390, 844);
+const b = await browser('about:blank', 390, 844);
 const route = async path => { await b.run('location.hash=' + JSON.stringify(path)); await wait(200); };
 const touch = (type, point) => b.send('Input.dispatchTouchEvent', { type, touchPoints: point ? [point] : [] });
 async function swipe(from, to, beforeEnd) {
@@ -16,9 +16,9 @@ async function swipe(from, to, beforeEnd) {
 }
 
 try {
-  await b.run(`localStorage.setItem('leapmore.mode', '"demo"'); localStorage.setItem('leapmore.activeVehicle', '"demo-c10"');
-    localStorage.removeItem('leapmore.source');
-    localStorage.removeItem('leapmore.energyCards');`);
+  await b.send('Storage.clearDataForOrigin', { origin: new URL(app).origin, storageTypes: 'local_storage,indexeddb' });
+  await b.navigate(app);
+  await b.run(`localStorage.setItem('leapmore.mode', '"demo"'); localStorage.setItem('leapmore.activeVehicle', '"demo-c10"');`);
   await b.reload();
   await route('/energy');
   assert.deepEqual(await b.run('[...document.querySelectorAll("[data-energy-card]")].map(card => card.dataset.energyCard)'),
@@ -143,6 +143,7 @@ try {
   assert.ok(await b.run("!!document.querySelector('.record-month .record-day[open] a[href*=trips]')"));
   await period('行程','年');
   await wait(100);
+  assert.ok(await b.run("!!document.querySelector('.record-month') && !document.querySelector('.record-month button[aria-expanded=true], .record-month .record-day')"));
   assert.ok(await b.run("parseInt(document.querySelector('.record-total').textContent)<6"));
   await swipe({x:270,y:250},{x:80,y:250});
   await wait(150);
@@ -168,8 +169,16 @@ try {
   }
   await swipe({x:80,y:250},{x:270,y:250});
   await wait(150);
-  await period('行程','月');
-  await wait(100);
+  for (const range of ['周', '月']) {
+    await period('行程', range);
+    await wait(100);
+    assert.ok(await b.run(`(() => {
+      const days = [...document.querySelectorAll('.record-day')];
+      return days[0]?.open && days.slice(1).every(day => !day.open) && days[0].querySelector('a[href*=trips]').checkVisibility();
+    })()`));
+    await b.click('.record-day summary');
+    assert.equal(await b.run("document.querySelector('.record-day').open"), false);
+  }
   assert.equal(await b.run("document.querySelectorAll('.record-month').length"), 0);
   const daySummary = await b.run(`(() => {
     const summary = document.querySelector('.record-day summary');

@@ -20,7 +20,7 @@ export function parseAmapPoint(value: unknown): Point | undefined {
 export function useAmapAddress(point: Point | null | undefined, enabled = true) {
   const { key, revision } = useAmapKey();
   const location = point ? locationValue(point) : '';
-  return useQuery({ queryKey: ['amap', 'address', revision, location], enabled: enabled && !!key && !!location,
+  const query = useQuery({ queryKey: ['amap', 'address', revision, location], enabled: enabled && !!key && !!location,
     staleTime: 15 * 60_000, gcTime: 30 * 60_000, retry: false, queryFn: async ({ signal }) => {
       const params = new URLSearchParams({ location, key: key! });
       const reply = await request<{ status: string; regeocode?: { formatted_address?: string } }>(service + 'geocode/regeo?' + params, { signal });
@@ -28,6 +28,7 @@ export function useAmapAddress(point: Point | null | undefined, enabled = true) 
       const address = reply.regeocode?.formatted_address;
       return typeof address === 'string' ? address.trim() : '';
     } });
+  return { hasKey: !!key, data: key ? query.data : undefined, isError: !!key && query.isError };
 }
 
 export function useAmapSuggestions(input: string, origin: Point | null) {

@@ -6,30 +6,15 @@ import { ControlNotice, useCommands } from './commands';
 import { useVehicleControls } from './controls';
 import { AmapView } from './AmapView';
 import { AmapKeySheet, useAmapKey } from './AmapKey';
-import { openAmapNavigation, parseAmapPoint, useAmapAddress, useAmapSuggestions } from './amapServices';
+import { openAmapNavigation, useAmapAddress, useAmapSuggestions } from './amapServices';
 import type { AmapPlace } from './amapServices';
 import type { Favorite } from '../../data/preferences';
+import { readSetting } from '../../data/localDatabase';
 import { AppBar, Hint, Row, Section, Sheet, SheetButtons, stamp } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
-import { request } from '../../platform/network';
-import type { Point } from '../../data/ha/measurements';
+import { mapPoint, resolveDestination } from './navigationDestination';
 
-export function mapPoint(point: Point): Point {
-  if (point.coordinate !== 'wgs84' || point.lon < 72.004 || point.lon > 137.8347 || point.lat < .8293 || point.lat > 55.8271) return point;
-  const x = point.lon - 105, y = point.lat - 35;
-  const pi = Math.PI, ee = .006693421622965943, base = 6378245;
-  const shared = (20 * Math.sin(6 * x * pi) + 20 * Math.sin(2 * x * pi)) * 2 / 3;
-  const deltaLat = -100 + 2 * x + 3 * y + .2 * y * y + .1 * x * y + .2 * Math.sqrt(Math.abs(x)) + shared +
-    (20 * Math.sin(y * pi) + 40 * Math.sin(y / 3 * pi) + 160 * Math.sin(y / 12 * pi) + 320 * Math.sin(y / 30 * pi)) * 2 / 3;
-  const deltaLon = 300 + x + 2 * y + .1 * x * x + .1 * x * y + .1 * Math.sqrt(Math.abs(x)) + shared +
-    (20 * Math.sin(x * pi) + 40 * Math.sin(x / 3 * pi) + 150 * Math.sin(x / 12 * pi) + 300 * Math.sin(x / 30 * pi)) * 2 / 3;
-  const t = point.lat * pi / 180;
-  const magic = 1 - ee * Math.sin(t) ** 2;
-  return { ...point, coordinate: 'gcj02',
-    lat: point.lat + deltaLat * 180 / (base * (1 - ee) / (magic * Math.sqrt(magic)) * pi),
-    lon: point.lon + deltaLon * 180 / (base / Math.sqrt(magic) * Math.cos(t) * pi),
-  };
-}
+export { mapPoint } from './navigationDestination';
 export function ParkingPhoto({ close }: { close: () => void }) {
   const m = useModelContext();
   const photo = useQuery({
@@ -70,21 +55,8 @@ export function LocationPage() {
     navigationJob.current = job;
     setLoadingDestination(true);
     try {
-      const reply = fav.point ? null : await request<{ status: string; geocodes?: { location: string; formatted_address?: string }[] }>(
-        'https://restapi.amap.com/v3/geocode/geo?' + new URLSearchParams({ address: fav.address, key: key! }), { signal: job.signal });
+      const destination = await resolveDestination(fav, key, m.vehicle?.abilities, job.signal);
       if (job.signal.aborted) return;
-      const match = reply?.geocodes?.[0];
-      const point = fav.point ?? (reply?.status === '1' ? parseAmapPoint(match?.location) : undefined);
-      if (!point) throw new Error('无法解析地址');
-      const { lat, lon } = point;
-      const destination = { name: fav.name, address: match?.formatted_address || fav.address, ...point };
-      if (m.vehicle?.abilities?.includes('39')) {
-        for (let i = 0; i < 3; i++) {
-          const mapped = mapPoint({ lat: destination.lat, lon: destination.lon, at: 0, coordinate: 'wgs84' });
-          destination.lat += lat - mapped.lat;
-          destination.lon += lon - mapped.lon;
-        }
-      }
       command.ask({ ...confirmation, description: destination.address, remote: { kind: 'navigation', destination } });
     } catch {
       if (!job.signal.aborted) m.setToast('无法解析常用地址，请检查地址和高德 Key。');
@@ -135,6 +107,7 @@ export function LocationPage() {
       </>}
     {configureKey && <AmapKeySheet close={() => setConfigureKey(false)} />}
     {manage && removeIndex === null && <Sheet title="常用地址" sub="快捷发送到车机导航" close={() => setManage(false)} showClose className="favorites-sheet">
+      {Object.keys(readSetting<Record<string, Favorite[]>>('favorites', {})).length > 0 && <p className="tiny muted">旧版常用地址未记录所属账号，因此不会自动显示。请为当前账号重新添加。</p>}
       {m.favorites.map((fav, i) => <div className="row" key={fav.name + ':' + i}><span className="ic"><Icon name="home" size={18} /></span>
         <span className="t">{fav.name}<small>{fav.address}</small></span><button className="link" aria-label={'删除' + fav.name} onClick={() => setRemoveIndex(i)}>删除</button></div>)}
       {m.favorites.length > 0 && <div className="divider" />}

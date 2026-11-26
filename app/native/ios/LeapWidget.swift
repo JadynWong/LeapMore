@@ -243,12 +243,25 @@ private struct Card: View {
     }
 }
 
-@main
 struct LeapMoreWidget: Widget {
     var body: some WidgetConfiguration {
         StaticConfiguration(kind: "LeapMoreVehicle", provider: Provider()) { entry in Card(entry: entry) }
             .configurationDisplayName("LeapMore 车辆")
             .description("在桌面查看续航、充电与车况。")
             .supportedFamilies([.systemSmall, .systemMedium, .systemLarge])
+    }
+}
+
+@main
+struct LeapMoreWidgets: WidgetBundle {
+    var body: some Widget {
+        LeapMoreWidget()
+        if #available(iOSApplicationExtension 18.0, *) {
+            PrepareVehicleControl()
+            StartClimateControl()
+            StopClimateControl()
+            LockVehicleControl()
+            FindVehicleControl()
+        }
     }
 }

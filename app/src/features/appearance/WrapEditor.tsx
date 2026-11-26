@@ -1,3 +1,4 @@
+import { ColorPicker } from '../../ui/Picker';
 import { useEffect, useRef, useState } from 'react';
 import { Icon } from '../../ui/Icon';
 import { WrapPresets } from './WrapPresets';
@@ -129,8 +130,7 @@ export function WrapEditor({ vehicleId, visual, ready, focusFace, finish }: {
       {(notice || uploading > 0) && <p className="wrap-notice" role="status">{notice || '正在导入图片…'}</p>}
       {editableColor && <div className="wrap-colors">
         <div className="wrap-section-heading"><h3>颜色</h3>
-          <label className="wrap-custom-color"><Icon name="palette" size={15} /><span>{material.color.toUpperCase()}</span>
-            <input type="color" value={material.color} aria-label="自定义车衣颜色" onChange={e => changeFace({ color: e.target.value })} /></label>
+          <ColorPicker aria-label="自定义车衣颜色" value={material.color} onValue={color => changeFace({ color })} />
         </div>
         <div className="wrap-palette" role="group" aria-label="车衣颜色">{colors.map(([label, hex]) =>
           <button key={hex} aria-label={label} aria-pressed={!!applied && material.color.toLowerCase() === hex}

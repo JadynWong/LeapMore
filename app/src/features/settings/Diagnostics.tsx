@@ -1,12 +1,15 @@
 import { useState, useSyncExternalStore } from 'react';
 import md5 from 'blueimp-md5';
 import { readSetting, saveSetting } from '../../data/localDatabase';
+import { RecordingDiagnostics, readRecordingReport, recordingReportFields } from './RecordingDiagnostics';
+import { hasBackgroundRecorder } from '../../platform/recorder';
+import { failureLabels, loginStages } from '../../data/serviceFailure';
 import { readFailure } from '../../data/readDiagnostics';
 import { checkNames, probeHost, runtimeFacts, timedCheck, type CheckName, type CheckResult } from '../../platform/diagnostics';
 import { useQueryClient } from '@tanstack/react-query';
 import { Link, useSearchParams } from 'react-router-dom';
-import { diagnosticCsv, diagnosticFamily, diagnosticRuns, diagnosticSteps, diagnosticYear, modelFinding, subscribeDiagnostics } from '../../data/modelDiagnostics';
-import { saveRecordsCsv } from '../../platform/settings';
+import { diagnosticCsv, diagnosticText, diagnosticFamily, diagnosticRuns, diagnosticSteps, diagnosticYear, modelFinding, subscribeDiagnostics } from '../../data/modelDiagnostics';
+import { saveTextFile } from '../../platform/settings';
 import { Section, stamp } from '../../ui/components';
 import { Icon, type IconName } from '../../ui/Icon';
 import { useVehicleVisual, VehicleModel } from '../appearance/VehicleModel';
@@ -33,10 +36,14 @@ const iso = (at: number | undefined) => at ? new Date(at).toISOString() : 'unkno
 
 export function Diagnostics() {
   const m = useModelContext();
+  const recording = m.mode === 'cloud' && !!m.cloudKey && hasBackgroundRecorder();
+  const eligible = m.usesPhone && !m.expired && m.grants.mileage;
+  const loginFailure = [readFailure(m.profileScope, 'sms'), readFailure(m.profileScope, 'login')]
+    .filter(f => f != null).sort((a, b) => b.at.localeCompare(a.at))[0];
   const [search, setSearch] = useSearchParams();
   const qc = useQueryClient();
   const runs = useSyncExternalStore(subscribeDiagnostics, () => diagnosticRuns(m.cloudKey));
-  const [saving, setSaving] = useState(false);
+  const [saving, setSaving] = useState<'csv' | 'txt'>();
   const [notice, setNotice] = useState('');
   const storageKey = 'networkDiagnostic.' + md5(JSON.stringify([m.profileScope, m.cloudKey]));
   const [networkReport, setNetworkReport] = useState(() => readSetting<NetworkReport | null>(storageKey, null));
@@ -70,14 +77,15 @@ export function Diagnostics() {
     await qc.resetQueries({ queryKey: ['cloud', '3d', m.cloudKey], exact: true });
     setSearch({ check: '3d' }, { replace: true });
   }
-  async function save() {
+  async function save(format: 'csv' | 'txt') {
     if (saving) return;
-    setSaving(true);
+    setSaving(format);
     setNotice('');
     try {
       const captured = new Date();
-      const report = diagnosticCsv({
-        schema: '2', exportedAt: captured.toISOString(), ...await runtimeFacts(),
+      const serialize = format === 'txt' ? diagnosticText : diagnosticCsv;
+      const report = serialize({
+        schema: '3', exportedAt: captured.toISOString(), ...await runtimeFacts(),
         mode: m.mode ?? 'signed-out', session: m.mode !== 'cloud' ? 'not-applicable' : m.expired ? 'expired' : m.client ? 'active' : 'unavailable',
         networkCheckAt: networkReport?.at ?? 'not-run',
         ...(networkReport ? { checkedEnvironment: JSON.stringify(networkReport.environment),
@@ -97,12 +105,14 @@ export function Diagnostics() {
           rangeReadingsKm: JSON.stringify(m.rangeReadings ?? null),
           climateTargetC: String(m.current.climateTemp ?? 'unknown'),
         } : {}),
+        ...(recording ? { 'recording.source': m.source, 'recording.phoneEligible': String(eligible),
+          'recording.mileageGranted': String(m.grants.mileage), ...recordingReportFields(await readRecordingReport(m.cloudKey)) } : {}),
         ha: m.ha.expired ? 'expired' : m.ha.error ? 'error' : m.ha.connected ? 'connected' : 'disconnected',
       }, runs);
-      const name = 'leapmore-diagnostics-' + captured.toISOString().replace(/[^0-9]/g, '').slice(0, 17) + '.csv';
-      setNotice(await saveRecordsCsv(name, report) ? '诊断报告已导出。' : '已取消导出。');
+      const name = 'leapmore-diagnostics-' + captured.toISOString().replace(/[^0-9]/g, '').slice(0, 17) + '.' + format;
+      setNotice(await saveTextFile(name, report) ? '诊断报告已导出。' : '已取消导出。');
     } catch { setNotice('无法保存诊断报告，请重新选择保存位置。'); }
-    finally { setSaving(false); }
+    finally { setSaving(undefined); }
   }
   const explanation = m.expired ? '重新登录后可检测本车车模。' :
     m.mode === 'cloud' ? '选择已授权车辆后可检测本车车模。' : '登录零跑账号并选车后可检测本车车模。';
@@ -111,17 +121,21 @@ export function Diagnostics() {
       <DiagnosticHeading icon="wifi" title="网络与车辆诊断" />
       <p>检查零跑服务连接。登录后可同时检测车辆授权和车况读取。</p>
       <button className="btn accent sm" disabled={testing} onClick={() => void checkNetwork()}>{testing ? '正在检测网络与车辆…' : '检测网络与车辆'}</button>
+      {loginFailure && <p>最近失败 · {stamp(Date.parse(loginFailure.at))} · {loginFailure.stage ? loginStages[loginFailure.stage] : '账号请求'}
+        {' · ' + failureLabels[loginFailure.kind]}{loginFailure.nativeCode ? '（鸿蒙 ' + loginFailure.nativeCode + '）' : ''}</p>}
       {networkError && <p role="status">{networkError}</p>}
       {networkReport && <details className="diagnostic-results" open={showResults} onToggle={e => setShowResults(e.currentTarget.open)}>
         <summary>检测结果<time dateTime={networkReport.at}>{stamp(Date.parse(networkReport.at))}</time><Icon name="chevrond" size={15} /></summary>
         <dl>{(Object.keys(checkNames) as CheckName[]).map(key => <div key={key}>
           <dt>{checkNames[key]}</dt><dd>{networkReport.checks[key].result}
+            {networkReport.checks[key].nativeCode ? '（鸿蒙 ' + networkReport.checks[key].nativeCode + '）' : ''}
             {networkReport.checks[key].httpStatus && '（HTTP ' + networkReport.checks[key].httpStatus + '）'}</dd>
         </div>)}</dl>
         <p className="tiny muted">{networkReport.environment.os} · LeapMore {networkReport.environment.version}
           {networkReport.environment.webViewVersion && ' · WebView ' + networkReport.environment.webViewVersion}</p>
       </details>}
     </Section>
+    {recording && <RecordingDiagnostics scope={m.cloudKey} eligible={eligible} />}
     <Section className="diagnostic-card">
       <DiagnosticHeading icon="car" title="3D 车模诊断" />
       {checking && <DiagnosticViewer />}
@@ -141,9 +155,12 @@ export function Diagnostics() {
     </Section>
     <Section className="diagnostic-card">
       <DiagnosticHeading icon="file" title="诊断报告" />
-      <p>包含设备版本、网络检测、车辆读取和最近三次车模加载记录。已排除账号、车架号、位置、Wi-Fi 名称和素材密钥。</p>
-      <button className="btn ghost sm" disabled={saving || testing} onClick={() => void save()}><Icon name="download" size={16} />
-        {saving ? '正在导出…' : '导出诊断报告（CSV）'}</button>
+      <p>包含设备版本、网络检测、车辆读取{recording ? "、后台采样" : ""}和最近三次车模加载记录。已排除账号、车架号、位置、Wi-Fi 名称和素材密钥。</p>
+      <p>分享前请留意报告中的时间和车况信息。</p>
+      <div className="diagnostic-exports">{(['txt', 'csv'] as const).map(format =>
+        <button key={format} className="btn ghost sm" aria-label={'导出诊断报告（' + format.toUpperCase() + '）'} disabled={!!saving || testing} onClick={() => void save(format)}>
+          <Icon name="download" size={16} />{saving === format ? '正在导出…' : '导出 ' + format.toUpperCase()}
+        </button>)}</div>
       {notice && <p role="status">{notice}</p>}
     </Section>
     {m.mode === 'cloud' && m.vehicle && <details className="card diagnostic-fold">

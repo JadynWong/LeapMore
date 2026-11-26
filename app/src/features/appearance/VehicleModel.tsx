@@ -69,7 +69,9 @@ export function useVehicleVisual(paused = false, visible = true, diagnostic = fa
   const { mode: preferredMode, setMode, background, setBackground, quality, setQuality, wraps, setWraps, marketByVehicle, setMarketByVehicle } = useContext(Preferences)!;
   const mode = diagnostic ? '3d' : preferredMode;
   const wrap = wraps[m.vehicleId] ?? emptyWrap;
-  const market = marketByVehicle[m.vehicleId];
+  const saved = marketByVehicle[m.vehicleId];
+  // Earlier demo selections sometimes stored a C10 illustration for another model.
+  const market = saved?.image?.endsWith('/c10.png') && saved.model !== 'C10' ? undefined : saved;
   const modelName = m.vehicle?.model ?? '零跑';
   const queryKey = ['cloud', '3d', m.cloudKey] as const;
   const cloud = useQuery({ queryKey, enabled: visible && mode === '3d' && !!m.client && !!m.vehicleId && !paused && !m.expired,
@@ -101,11 +103,12 @@ export function useVehicleVisual(paused = false, visible = true, diagnostic = fa
   const paint = !m.hasCustomPaint && factoryPaint ? factoryPaint : m.paint;
   const fallback = !autoPicture && hasLocalCarAssets && ['C10', 'B10'].includes(modelName) ? asset(modelName === 'B10' ? 'b10.png' : 'c10.png') : '';
   const officialImage = photo.data?.startsWith('https://') ? photo.data : '';
-  const image = (mode === '2d' ? market?.image : undefined) || officialImage || fallback;
+  const marketImage = mode === '2d' ? market?.image : undefined;
+  const image = marketImage || officialImage || fallback;
   const scene = background === 'auto' ? m.colorScheme === 'dark' ? 'night' : 'day' : background;
   return { mode, setMode, background, scene, colorScheme: m.colorScheme, setBackground, quality, setQuality, wrap, setWraps, market, modelName, queryKey,
     setMarket: (next: MarketSelection) => setMarketByVehicle(previous => ({ ...previous, [m.vehicleId]: next })),
-    paint, colors, image, fallback, cloud, visible, autoPicture, fetchingPhoto: photo.isFetching,
+    paint, colors, image, fallback: marketImage ? undefined : fallback, cloud, visible, autoPicture, fetchingPhoto: photo.isFetching,
     paintOverride: m.hasCustomPaint || m.simulated ? m.paint.hex : '',
     viewer: mode === '3d' && !paused ? cloud.data?.url ?? localViewer : '' };
 }
@@ -217,6 +220,11 @@ export function VehicleModel({ visual, home = false, editingWrap = false, onStat
   const frame = useRef<HTMLIFrameElement>(null);
   const [phase, setPhase] = useState<'loading' | 'full' | 'unavailable'>('loading');
   const [brokenImages, setBrokenImages] = useState<string[]>([]);
+  useEffect(() => {
+    const retry = () => setBrokenImages([]);
+    window.addEventListener('online', retry);
+    return () => window.removeEventListener('online', retry);
+  }, []);
   const rememberBrokenImage = (url: string) => setBrokenImages(previous => [...previous, url]);
   const { viewer, scene: background, colorScheme, paintOverride, quality, wrap, cloud, visible } = visual;
   const cloudAsset = cloud.data;
@@ -312,8 +320,9 @@ export function VehicleModel({ visual, home = false, editingWrap = false, onStat
     {visible && status === 'full' && <OrbitSurface key={String(home)} home={home} send={sendOrbit} />}
     {status === '2d' && <>
       {image ? <img className="static3d contain" src={image} alt="车辆外观" referrerPolicy="no-referrer" onError={() => rememberBrokenImage(image)} /> :
-        <div className="car-image-missing"><Icon name="car" size={72} />{!home && <span>暂无车模图片</span>}</div>}
-      {!home && <div className="c3d-badge">{visual.mode === '2d' && visual.market ? visual.market.model + ' · ' + visual.market.year + ' · 2D 商城' : '2D 外观'}</div>}
+        <div className="car-image-missing"><Icon name="car" size={72} />{!home && (visual.image && brokenImages.includes(visual.image) ?
+          <button className="link" onClick={() => setBrokenImages([])}>重新加载外观图</button> : <span>暂无车模图片</span>)}</div>}
+      {!home && <div className="c3d-badge">{visual.mode === '2d' && visual.market?.image ? visual.market.model + ' · ' + visual.market.year + ' · 2D 商城' : '2D 外观'}</div>}
     </>}
   </div>;
 }

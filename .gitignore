@@ -5,6 +5,7 @@
 /icons/brand/leaplink-logo-original.png
 /.release-review/
 /.release-signing/
+/docs/internal/PRIVATE-*.md
 /.pnpm-store/
 .env
 .env.*

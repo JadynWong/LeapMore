@@ -2,12 +2,17 @@ const DB = 'leapmore-records';
 let connection: Promise<IDBDatabase> | undefined;
 
 function open() {
-  connection ??= new Promise((resolve, reject) => {
+  connection ??= new Promise<IDBDatabase>((resolve, reject) => {
     const req = indexedDB.open(DB, 1);
     req.onupgradeneeded = () => req.result.createObjectStore('datasets');
-    req.onsuccess = () => resolve(req.result);
+    req.onsuccess = () => {
+      const db = req.result;
+      db.onversionchange = () => { db.close(); connection = undefined; };
+      db.onclose = () => { connection = undefined; };
+      resolve(db);
+    };
     req.onerror = () => reject(new Error('无法打开本地记录库。'));
-  });
+  }).catch(error => { connection = undefined; throw error; });
   return connection;
 }
 

@@ -11,5 +11,5 @@
     "esModuleInterop": true,
     "types": ["vite/client", "node"]
   },
-  "include": ["src", "vite.config.ts", "capacitor.config.ts"]
+  "include": ["src", "native/quick", "vite.config.ts", "capacitor.config.ts"]
 }

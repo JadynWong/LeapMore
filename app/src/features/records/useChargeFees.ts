@@ -6,11 +6,16 @@ import type { Charge } from '../../data/ha/measurements';
 type ChargeKey = Pick<Charge, 'id' | 'sampledId'>;
 type SavedFee = { ids: string[]; amount: number };
 
-export function useChargeFees(scope: string, aliases?: Map<string, string[]>) {
+export function useChargeFees(scope: string, aliases?: Map<string, string[]>, ownedLegacyScope = '') {
   const client = useQueryClient();
   const storageKey = 'charge-fees:' + scope;
   const query = useQuery({ queryKey: [storageKey], enabled: !!scope, staleTime: Infinity, networkMode: 'always',
-    queryFn: async () => await readDataset<SavedFee[]>(storageKey) ?? [] });
+    queryFn: async () => {
+      const current = await readDataset<SavedFee[]>(storageKey);
+      if (current !== undefined || !ownedLegacyScope) return current ?? [];
+      const legacy = await readDataset<SavedFee[]>('charge-fees:' + ownedLegacyScope);
+      return legacy ? updateDataset<SavedFee[]>(storageKey, prior => prior ?? legacy) : [];
+    } });
   const byId = useMemo(() => {
     const amounts = new Map<string, number>();
     for (const fee of query.data ?? []) for (const id of fee.ids) amounts.set(id, fee.amount);

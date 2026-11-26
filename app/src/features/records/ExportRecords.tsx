@@ -1,3 +1,4 @@
+import { DatePicker } from '../../ui/Picker';
 import { useMemo, useState } from 'react';
 import type { Charge, Trip } from '../../data/ha/measurements';
 import { localDay } from '../../data/ha/measurements';
@@ -38,8 +39,8 @@ export function ExportRecords({ trips, charges, close, saved }: {
   return <Sheet title="导出记录" close={dismiss} className="record-export-sheet">
     <Seg label="导出范围" current={mode} choose={setMode} options={[['all', '全部记录'], ['range', '日期范围']]} disabled={busy} />
     {mode === 'range' && <div className="record-export-dates">
-      <label className="tiny muted">开始日期<input type="date" value={start} max={end || undefined} disabled={busy} onChange={event => setStart(event.target.value)} /></label>
-      <label className="tiny muted">结束日期<input type="date" value={end} min={start || undefined} disabled={busy} onChange={event => setEnd(event.target.value)} /></label>
+      <label className="tiny muted">开始日期<DatePicker aria-label="开始日期" value={start} max={end || undefined} disabled={busy} onValue={setStart} /></label>
+      <label className="tiny muted">结束日期<DatePicker aria-label="结束日期" value={end} min={start || undefined} disabled={busy} onValue={setEnd} /></label>
     </div>}
     <p className="small muted" role="status">{mode === 'range' && !validRange ? '请选择有效的开始和结束日期。' : selected.length ?
       `${tripCount} 段行程 · ${selected.length - tripCount} 次充电` : '此范围内没有可导出的记录。'}</p>

@@ -1,19 +1,19 @@
-import { createContext, useContext, useState } from 'react';
+import { createContext, useContext, useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
 import { useModelContext } from '../context';
 import { useCommands } from './commands';
+import { Capacitor } from '@capacitor/core';
+import { App as NativeApp } from '@capacitor/app';
+import { widgetBridge } from '../../platform/widgets';
 import { Row, Seg, Sheet, Switch } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
 import type { IconName } from '../../ui/Icon';
+import type { PreparationPreset } from '../../data/cloud/preparation';
 import type { CabinHeater, ClimateMode, RemoteCommand } from '../../data/cloud/remote';
 import { reportedWindowPosition, weekdays } from '../../data/cloud/remote';
 
-export const presets = [
-  ['极速降温', 'snow', { temp: 16, mode: 'cool', fan: 5 }],
-  ['极速升温', 'flame', { temp: 30, mode: 'heat', fan: 5 }],
-  ['快速除味', 'whirl', { mode: 'vent', fan: 5 }],
-  ['风挡除霜', 'wind', { mode: 'def', fan: 5 }],
-] as const;
+import { climatePresets as presets, findClimatePreset } from '../../data/cloud/climatePresets';
+export { presets };
 type Climate = { on: boolean; temp: number; mode: ClimateMode; fan: number; seat: number; vent: number; preset: string };
 const windowChoices = ['closed', 'vent', 'half', 'full'] as const;
 type WindowChoice = typeof windowChoices[number];
@@ -28,7 +28,7 @@ const windows = {
 const initial = {
   locked: true, trunk: false, window: 'closed' as WindowChoice, shade: false,
   climate: { on: false, temp: 18, mode: 'cool', fan: 2, seat: 0, vent: 0, preset: '' } as Climate,
-  steeringHeat: false, mirrorHeat: false,
+  sentry: false, steeringHeat: false, mirrorHeat: false,
   limit: 90, health: true, schedule: false, start: '22:00', end: '06:00', days: weekdays,
 };
 export const chargeLabels = { unplugged: '未插枪', plugged: '已插枪', charging: '充电中', done: '充电完成', unknown: '状态未知' } as const;
@@ -38,6 +38,15 @@ const cabinHeaters = {
   mirrorHeat: { title: '后视镜加热', icon: 'defrost' },
 } as const;
 const heaterKeys = ['steeringHeat', 'mirrorHeat'] as const;
+
+function preparationSettings(climate: Climate, preset: PreparationPreset) {
+  const prepared = { ...climate };
+  const selected = findClimatePreset(preset.climatePreset);
+  if (preset.climate) Object.assign(prepared, { on: true, temp: preset.temperature, fan: preset.fan, ...selected?.[2], preset: selected?.[0] ?? '' });
+  if (preset.seat === 'heat') { prepared.seat = 3; prepared.vent = 0; }
+  if (preset.seat === 'vent') { prepared.vent = 3; prepared.seat = 0; }
+  return { climate: prepared, ...(preset.steering && { steeringHeat: true }), ...(preset.mirrors && { mirrorHeat: true }) };
+}
 
 function useControlsModel() {
   const model = useModelContext();
@@ -71,11 +80,40 @@ function useControlsModel() {
     const id = model.vehicleId;
     setSettings(records => ({ ...records, [id]: { ...(records[id] ?? initial), ...update } }));
   }
-  function lock() {
-    const target = locked === false;
-    cmd.ask({ kind: 'lock', title: lockTitle, icon: target ? 'doorLock' : 'doorUnlock',
+  function applyPreparation(preset: PreparationPreset) { patch(preparationSettings(climate, preset)); }
+  useEffect(() => {
+    if (!model.booted || model.mode !== 'demo' || !['ios','android'].includes(Capacitor.getPlatform())) return;
+    const apply = async () => {
+      const effects = await widgetBridge.takeDemo().catch(() => []);
+      if (!effects.length) return;
+      setSettings(previous => {
+        const next = { ...previous };
+        for (const { vehicleId, action, preset } of effects) {
+          const before = next[vehicleId] ?? initial;
+          if (action === 'lock-only') next[vehicleId] = { ...before, locked: true };
+          if (action === 'climate-on' || action === 'climate-off') next[vehicleId] = { ...before, climate: { ...before.climate, on: action === 'climate-on' } };
+          if (preset && (action === 'prepare' || action === 'prepare-2')) next[vehicleId] = { ...before, ...preparationSettings(before.climate, preset) };
+        }
+        return next;
+      });
+    };
+    const visible = () => { if (!document.hidden) void apply(); };
+    visible();
+    const listener = NativeApp.addListener('appStateChange', e => { if (e.isActive) visible(); });
+    document.addEventListener('visibilitychange', visible);
+    globalThis.addEventListener('focus', visible);
+    return () => { void listener.then(l => l.remove()); document.removeEventListener('visibilitychange', visible); globalThis.removeEventListener('focus', visible); };
+  }, [model.mode, model.booted]);
+  function toggleSentry(on: boolean, stillRequested?: () => boolean, onComplete?: () => void) {
+    cmd.ask({ kind: 'sentry', title: (on ? '开启' : '关闭') + '哨兵模式', icon: 'shield',
+      stillRequested, onComplete, description: stillRequested ? '检测到本次驻车的哨兵模式已关闭。' : onComplete ? '同时关闭这辆车的「一直启动哨兵模式」。' : undefined,
+      remote: { kind: 'sentry', on, ...(stillRequested && { onlyWhenParkedOff: true }) }, apply: () => patch({ sentry: on }) });
+  }
+  function setDoorLock(target: boolean) {
+    cmd.ask({ kind: 'lock', title: target ? '上锁车门' : '解锁车门', icon: target ? 'doorLock' : 'doorUnlock',
       description: target ? '请确认已带出钥匙。' : undefined, remote: { kind: 'lock', locked: target }, apply: () => patch({ locked: target }) });
   }
+  function lock() { setDoorLock(locked === false); }
   function toggleTrunk() {
     cmd.ask({ kind: 'trunk', title: trunkTitle, icon: trunk ? 'tailgate' : 'tailgateOpen',
       description: '请确认车后无人、无遮挡。', remote: { kind: 'trunk', open: !trunk }, apply: () => patch({ trunk: !trunk }) });
@@ -90,13 +128,13 @@ function useControlsModel() {
     cmd.ask({ kind: 'shade', title: shadeOpen ? '关闭遮阳帘' : '打开遮阳帘', icon: shadeOpen ? 'roofShade' : 'roofShadeOpen',
       remote: { kind: 'shade', open: !shadeOpen }, apply: () => patch({ shade: !shadeOpen }) });
   }
-  function toggleClimate() {
-    const on = !climateOn;
-    cmd.ask({ kind: 'climate', title: climateTitle, icon: 'climateFan',
+  function setClimatePower(on: boolean) {
+    cmd.ask({ kind: 'climate', title: on ? '开启空调' : '关闭空调', icon: 'climateFan',
       description: on && !model.simulated ? `制冷 · ${climate.temp}℃ · 风量 ${climate.fan} 档` : undefined,
       remote: { ...climate, kind: 'climate', on, preset: false },
       apply: () => patch({ climate: { ...climate, on } }) });
   }
+  function toggleClimate() { setClimatePower(!climateOn); }
   function sendClimate(update: Partial<Climate>, description: string, after?: () => void) {
     const target = { ...climate, ...update, preset: '' };
     cmd.ask({ kind: 'climate', title: '发送空调设置', icon: 'climateFan', description,
@@ -105,10 +143,8 @@ function useControlsModel() {
   }
   function preset(p: (typeof presets)[number]) {
     setSheet(null);
-    const realPresets = { 极速降温: [18, 7], 极速升温: [32, 7], 快速除味: [24, 4], 风挡除霜: [24, 7] } as const;
-    const [temp, fan] = realPresets[p[0]];
     cmd.ask({ kind: 'climate', title: '启用' + p[0], icon: p[1],
-      remote: { kind: 'climate', on: true, mode: p[2].mode, temp, fan, preset: true },
+      remote: { kind: 'climate', on: true, ...p[2], preset: true },
       apply: () => patch({ climate: { ...climate, on: true, ...p[2], preset: p[0] } }) });
   }
   function seat(key: 'seat' | 'vent', n: number) {
@@ -134,7 +170,7 @@ function useControlsModel() {
     cmd.ask({ kind: 'charge', title, icon: 'plug', description, remote, onComplete, apply: () => patch(update) });
   }
   function find() { cmd.ask({ kind: 'find', title: '鸣笛寻车', icon: 'carHorn', description: '车辆将闪灯并鸣笛。', remote: { kind: 'find' } }); }
-  return { ...cmd, settings, climate, targetTemp, heating, hasCabinHeating, hasComfort, toggleHeater, sheet, setSheet, locked, lockTitle, climateOn, climateTitle, trunk, trunkTitle,
+  return { ...cmd, settings, toggleSentry, applyPreparation, setDoorLock, setClimatePower, climate, targetTemp, heating, hasCabinHeating, hasComfort, toggleHeater, sheet, setSheet, locked, lockTitle, climateOn, climateTitle, trunk, trunkTitle,
     window, windowPosition, windowOpen, shadeOpen, lock, toggleTrunk, setWindow, shade, toggleClimate, sendClimate, preset, seat, charging, find };
 }
 const Controls = createContext<ReturnType<typeof useControlsModel> | null>(null);

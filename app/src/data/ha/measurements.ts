@@ -8,9 +8,9 @@ export type Point = { at: number; lat: number; lon: number; coordinate: 'gcj02' 
 export type MetricSample = { at: number; value: number | null; soc?: number | null };
 export type TrackSample = MetricSample & { position?: Point; distanceKm?: number };
 export type Reading = Partial<Record<Field, number | string | null>> & { position?: Point | null };
-export type Frame = { at: number; data: Reading; changed: Field[] };
+export type Frame = { at: number; data: Reading; changed: Field[]; tripBoundary?: 'interrupted' | 'ended'; chargeOnly?: true };
 export type Trip = TripSummary & { route: Point[]; speeds: { at: number; value: number }[]; gap: boolean; group?: 'archive'; socStart?: number | null; socEnd?: number | null };
-export type Charge = ChargeSession & { powers: { at: number; value: number }[]; powerTimeline?: MetricSample[]; group?: 'archive'; active?: boolean;
+export type Charge = ChargeSession & { position?: Point; powers: { at: number; value: number }[]; powerTimeline?: MetricSample[]; group?: 'archive'; active?: boolean;
   energyBasis?: 'official' | 'soc'; sampledId?: string; minRecordedBatteryTempC?: number };
 
 const missing = new Set(['', 'unavailable', 'unknown', 'none', 'null', 'nan', '—']);
@@ -67,8 +67,39 @@ function normalized(field: Field, sample: Sample) {
   if (field === 'inside' && unit === '°f') return (v - 32) * 5 / 9;
   return v;
 }
-function position(lat: number | null, lon: number | null, at: number, coordinate: Point['coordinate']): Point | null {
-  return lat === null || lon === null || Math.abs(lat) > 90 || Math.abs(lon) > 180 || (!lat && !lon) ? null : { at, lat, lon, coordinate };
+export function position(lat: number | null, lon: number | null, at: number, coordinate: Point['coordinate']): Point | null {
+  return lat === null || lon === null || !Number.isFinite(lat) || !Number.isFinite(lon) || Math.abs(lat) > 90 || Math.abs(lon) > 180 || (!lat && !lon) ? null : { at, lat, lon, coordinate };
+}
+
+// History frames are chronological. Only an actual position update inside the
+// session counts; HA carries previous entity values through unrelated updates.
+export function withChargePositions(charges: Charge[], frames: Frame[]): Charge[] {
+  if (!charges.length || !frames.length) return charges;
+  const points = frames.flatMap(f => {
+    const p = f.data.position;
+    if (!p || p.at !== f.at || drivingOf(f.data) === true ||
+      !f.changed.some(key => key === 'tracker' || key === 'latitude' || key === 'longitude')) return [];
+    return [p];
+  });
+  if (!points.length) return charges;
+  return charges.map(row => {
+    if (row.position && row.position.coordinate !== 'unknown') return row;
+    let lo = 0, hi = points.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >>> 1;
+      if (points[mid].at < row.startedAt) lo = mid + 1;
+      else hi = mid;
+    }
+    const end = row.endedAt ?? row.powerTimeline?.at(-1)?.at ?? row.startedAt;
+    let fallback = row.position;
+    for (let i = lo; i < points.length && points[i].at <= end; i++) {
+      const p = points[i];
+      if (p.at === end && row.endedAt !== null && end !== row.startedAt) break;
+      if (p.coordinate !== 'unknown') return { ...row, position: p };
+      fallback ??= p;
+    }
+    return fallback === row.position ? row : { ...row, position: fallback };
+  });
 }
 
 export function framesOf(entries: Sample[], mapping: Mapping): Frame[] {
@@ -137,6 +168,19 @@ function split(frames: Frame[], kind: 'trip' | 'charge') {
   let active: Segment | null = null;
   let previous: boolean | null = null;
   for (const frame of frames) {
+    if (frame.tripBoundary) {
+      if (kind === 'trip') {
+        if (active) {
+          active.end = active.frames.at(-1)!.at;
+          active.partial ||= frame.tripBoundary === 'interrupted';
+          result.push(active);
+          active = null;
+        }
+        previous = null;
+      }
+      continue;
+    }
+    if (kind === 'trip' && frame.chargeOnly) continue;
     const status = activeValue(frame, kind);
     if (active) active.frames.push(frame);
     if (!active && status === true) {

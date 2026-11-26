@@ -16,13 +16,18 @@ public class LeapRecorderPlugin extends Plugin {
         getActivity().runOnUiThread(() -> {
             Context context = getContext();
             Intent service = new Intent(context, LeapRecordingService.class);
-            service.putExtra("delay", call.getInt("delay", 60_000));
+            int delay = call.getInt("delay", 60_000);
+            String scope = call.getString("scope", "");
+            service.putExtra("delay", delay).putExtra("scope", scope);
             try {
                 LeapRecordingService.attach(this);
                 if (Build.VERSION.SDK_INT >= 26) context.startForegroundService(service);
                 else context.startService(service);
                 call.resolve();
-            } catch (RuntimeException ignored) { call.reject("无法开启后台车况轮询"); }
+            } catch (RuntimeException ignored) {
+                new RecordingDiagnostics(context, scope, delay).stop("failed");
+                call.reject("无法开启后台车况轮询");
+            }
         });
     }
 
@@ -37,21 +42,33 @@ public class LeapRecorderPlugin extends Plugin {
     @PluginMethod
     public void stop(PluginCall call) {
         getActivity().runOnUiThread(() -> {
-            stopService();
+            stopService("scope-change".equals(call.getString("reason")) ? "scope-change" : "user");
             call.resolve();
         });
     }
 
-    private void stopService() {
+    private void stopService(String reason) {
         if (LeapRecordingService.owns(this)) {
+            LeapRecordingService.stopping(this, reason);
             getContext().stopService(new Intent(getContext(), LeapRecordingService.class));
         }
     }
 
     @Override
-    protected void handleOnDestroy() { stopService(); }
+    protected void handleOnDestroy() { stopService("bridge-destroyed"); }
 
-    void poll() { notifyListeners("poll", new JSObject()); }
+    void poll(String scope) { notifyListeners("poll", new JSObject().put("scope", scope)); }
+
+    @PluginMethod
+    public void getDiagnostics(PluginCall call) {
+        getActivity().runOnUiThread(() -> {
+            String scope = call.getString("scope", "");
+            JSObject result = new JSObject();
+            result.put("running", LeapRecordingService.runningFor(scope));
+            result.put("sessions", RecordingDiagnostics.report(getContext(), scope));
+            call.resolve(result);
+        });
+    }
 
     void status(boolean running, String reason) {
         notifyListeners("status", new JSObject().put("running", running).put("reason", reason));

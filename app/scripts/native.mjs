@@ -20,6 +20,7 @@ if (!['android', 'ios', 'harmony'].includes(platform)) throw new Error('指定 a
 js('scripts/assets.mjs', ...((process.env.LEAPMORE_LOCAL_CAR_ASSETS === '1' || process.env.LEAPMORE_LOCAL_3D_DEMO === '1') ? ['--demo'] : []));
 js('node_modules/typescript/bin/tsc', '--noEmit');
 js('node_modules/vite/bin/vite.js', 'build');
+if (platform !== 'harmony') js('scripts/quick-worker.mjs', platform);
 const cap = 'node_modules/@capacitor/cli/bin/capacitor';
 if (platform === 'android') {
   if (!existsSync('android/app')) js(cap, 'add', 'android');
@@ -85,6 +86,20 @@ if (platform === 'android') {
             </intent-filter>
         </activity-alias>`).join('\n'));
     }
+    if (!xml.includes('android.service.quicksettings.action.QS_TILE_PREFERENCES')) {
+      xml = xml.replace('</activity>', '<intent-filter><action android:name="android.service.quicksettings.action.QS_TILE_PREFERENCES" /><category android:name="android.intent.category.DEFAULT" /></intent-filter>\n        </activity>');
+    }
+    for (const [service, title, icon] of [
+      ['Prepare', '一键备车', 'leap_tile_prepare'], ['PrepareSecond', '一键备车 2', 'leap_tile_prepare'],
+      ['ClimateOn', '开启空调', 'leap_widget_icon_fan'], ['ClimateOff', '关闭空调', 'leap_widget_icon_fan'],
+      ['Lock', '锁车', 'leap_widget_icon_lock'], ['Find', '鸣笛寻车', 'leap_widget_icon_find'],
+    ]) {
+      const name = '.VehicleTile$' + service;
+      if (!xml.includes('android:name="' + name + '"')) xml = xml.replace('</application>', `    <service android:name="${name}" android:label="${title}" android:icon="@drawable/${icon}"
+            android:permission="android.permission.BIND_QUICK_SETTINGS_TILE" android:exported="true">
+            <intent-filter><action android:name="android.service.quicksettings.action.QS_TILE" /></intent-filter>
+        </service>\n    </application>`);
+    }
     if (!xml.includes('WidgetControlActivity')) xml = xml.replace('</application>', `        <activity android:name=".WidgetControlActivity" android:exported="false" android:excludeFromRecents="true"
             android:taskAffinity="\${applicationId}.widget" android:theme="@style/Leap.WidgetControl" android:windowSoftInputMode="adjustResize" />\n    </application>`);
     if (!xml.includes('LeapWidget$Small')) xml = xml.replace('</application>', ['Small', 'Medium', 'Large'].map((size, i) =>
@@ -92,6 +107,10 @@ if (platform === 'android') {
             <intent-filter><action android:name="android.appwidget.action.APPWIDGET_UPDATE" /></intent-filter>
             <meta-data android:name="android.appwidget.provider" android:resource="@xml/leap_widget_${size.toLowerCase()}" />
         </receiver>`).join('\n') + '\n    </application>');
+    xml = xml.replace(/<activity\b[^>]*>/g, tag => /android:name="\.(?:MainActivity|WidgetControlActivity)"/.test(tag)
+      ? tag.replace(/\s+android:screenOrientation="[^"]*"/g, '').replace('<activity', '<activity android:screenOrientation="portrait"') : tag);
+    const orientationProperty = 'android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY';
+    if (!xml.includes(orientationProperty)) xml = xml.replace('</application>', '    <property android:name="' + orientationProperty + '" android:value="true" />\n    </application>');
     return xml;
   });
   edit('android/app/build.gradle', source => source.replace(/versionName\s+"[^"]+"/, `versionName "${version}"`)

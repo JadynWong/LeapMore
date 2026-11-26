@@ -1,4 +1,4 @@
-import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { copyFileSync, cpSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 
 const entry = 'openharmony/entry/src/main';
 const { version, buildNumber } = JSON.parse(readFileSync('package.json', 'utf8'));
@@ -43,6 +43,7 @@ edit(ets + '/entryability/EntryAbility.ets', source => {
 
   onDestroy(): void`);
 });
+edit(entry + '/module.json5', source => source.replace(/("name"\s*:\s*"EntryAbility",)(?:\s*"orientation"\s*:\s*"[^"]*",)?/, '$1\n        "orientation": "portrait",'));
 edit(entry + '/module.json5', source => {
   if (source.includes('WidgetAbility')) return source;
   return source.replace('"extensionAbilities": [', `"extensionAbilities": [
@@ -74,6 +75,8 @@ edit(entry + '/resources/base/element/string.json', source => {
   values.string = values.string.filter(item => item.name !== 'EntryAbility_location');
   return JSON.stringify(values, null, 2) + '\n';
 });
+edit(entry + '/module.json5', source => source.includes('ohos.permission.GET_NETWORK_INFO') ? source :
+  source.replace(/"requestPermissions"\s*:\s*\[/, '$&\n      { "name": "ohos.permission.GET_NETWORK_INFO" },'));
 edit(entry + '/module.json5', source => source.includes('ohos.permission.ACCESS_BIOMETRIC') ? source :
   source.replace(/"requestPermissions"\s*:\s*\[/, '$&\n      { "name": "ohos.permission.ACCESS_BIOMETRIC" },'));
 
@@ -85,6 +88,15 @@ const plugins = [
 ];
 edit(capacitor + '/src/main/cpp/CMakeLists.txt', source => source.replace(
   /^[ \t]*(?:add_subdirectory\(Geolocation\)|Geolocation)[ \t]*\n/gm, ''));
+edit(capacitor + '/src/main/cpp/CMakeLists.txt', source => {
+  if (source.includes('set(CMAKE_SKIP_RPATH TRUE)')) return source;
+  const marker = 'set(NATIVERENDER_ROOT_PATH ${CMAKE_CURRENT_SOURCE_DIR})';
+  if (!source.includes(marker)) throw new Error('Unsupported Harmony CMake configuration');
+  return source.replace(marker, [marker,
+    'set(CMAKE_SKIP_RPATH TRUE)',
+    'add_compile_options("-ffile-prefix-map=${CMAKE_CURRENT_SOURCE_DIR}=." "-ffile-prefix-map=$ENV{HOME}=/build")',
+  ].join('\n'));
+});
 edit(capacitor + '/build-profile.json5', source => source.replace(
   /^[ \t]*"\.\/src\/main\/ets\/components\/Geolocation\/Geolocation\.ets",\n/gm, ''));
 for (const { name, classpath, action } of plugins) {
@@ -101,6 +113,28 @@ for (const { name, classpath, action } of plugins) {
     source.replace('"./src/main/ets/components/Permission/PermissionAction.ets"',
       `"${runtimePath}",\n          "./src/main/ets/components/Permission/PermissionAction.ets"`));
 }
+
+// The upstream bridge logs complete plugin results and Cordova arguments, and
+// its filesystem implementation logs file contents. These can include login
+// responses, control parameters and exported data, even in release builds.
+// Patch the generated project, not the pinned dependency in node_modules.
+function stripHarmonyPayloadLogs(source, kind) {
+  if (kind === 'cpp') return source.replace(/OH_LOG_Print\([\s\S]*?\);/g, '(void)0; /* Native bridge log removed for privacy. */');
+  if (kind === 'ets') return source.replace(/^\s*console\.(?:log|info|warn|error|debug)\([^\n]*\);?\s*$/gm, '');
+  if (kind === 'bridge') return source.replace(/if \(cap\.isLoggingEnabled && (pluginName|result\.pluginId) !== 'Console'\)/g, "if (false && $1 !== 'Console')");
+  throw new Error('Unknown Harmony log source');
+}
+for (const file of [
+  'src/main/cpp/getcapacitor/MessageHandler.cpp', 'src/main/cpp/getcapacitor/MessageQueue.cpp',
+  'src/main/cpp/getcapacitor/MessageQueue.h', 'src/main/cpp/NativeToJsMessageQueue.cpp',
+  'src/main/cpp/NativeToJsMessageQueue.h', 'src/main/cpp/ConnPool.cpp',
+]) edit(capacitor + '/' + file, source => stripHarmonyPayloadLogs(source, 'cpp'));
+for (const file of ['src/main/ets/components/Filesystem/FilesystemAction.ets', 'src/main/ets/components/PluginAction/PluginAction.ets']) {
+  edit(capacitor + '/' + file, source => stripHarmonyPayloadLogs(source, 'ets'));
+}
+for (const file of [capacitor + '/src/main/resources/rawfile/native-bridge.js', entry + '/resources/rawfile/www/native-bridge.js']) {
+  edit(file, source => stripHarmonyPayloadLogs(source, 'bridge'));
+}
 edit(entry + '/resources/rawfile/capacitor.plugins.json', source => {
   const values = JSON.parse(source).filter(item => item.classpath !== 'Geolocation');
   for (const { name, classpath } of plugins) {
@@ -111,8 +145,17 @@ edit(entry + '/resources/rawfile/capacitor.plugins.json', source => {
 
 const ssl = process.env.LEAPMORE_OHOS_OPENSSL_DIR;
 if (ssl) {
-  cpSync(ssl + '/libs', 'openharmony/capacitor/libs', { recursive: true });
-  cpSync(ssl + '/openssl', 'openharmony/capacitor/src/main/cpp/openssl', { recursive: true });
+  for (const abi of ['arm64-v8a', 'x86_64']) {
+    const abiDir = capacitor + '/libs/' + abi;
+    mkdirSync(abiDir, { recursive: true });
+    for (const name of ['libssl.so.3', 'libcrypto.so.3']) {
+      copyFileSync(ssl + '/libs/' + abi + '/' + name, abiDir + '/' + name);
+    }
+    // Older generated projects contain optional modules from the prebuilt OpenSSL bundle.
+    for (const folder of ['engines-3', 'ossl-modules']) rmSync(abiDir + '/' + folder, { recursive: true, force: true });
+    cpSync(ssl + '/openssl/' + abi + '/include', capacitor + '/src/main/cpp/openssl/' + abi + '/include', { recursive: true });
+  }
+  if (existsSync(ssl + '/LICENSE.txt')) copyFileSync(ssl + '/LICENSE.txt', entry + '/resources/rawfile/OpenSSL-LICENSE.txt');
 }
 edit('openharmony/build-profile.json5', source => source.replace('"5.0.0(12)"', '"6.0.0(20)"')
   .replace('"5.0.5(17)"', '"6.0.0(20)"'));

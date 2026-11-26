@@ -1,3 +1,7 @@
+import { TimePicker } from '../../ui/Picker';
+import { ManualTripCard } from './ManualTripCard';
+import { supportsManualTrips } from '../../platform/iosTrip';
+import { Capacitor } from '@capacitor/core';
 import { useEffect, useId, useMemo, useRef, useState } from 'react';
 import { flushSync } from 'react-dom';
 import type { MouseEvent, ReactNode } from 'react';
@@ -11,7 +15,7 @@ import { MileageNotice } from './Energy';
 import { localDay } from '../../data/ha/measurements';
 import { haTripTrack } from '../../data/ha/ledger';
 import { defaultRecordSource, useSetting } from '../../data/preferences';
-import type { Trip } from '../../data/ha/measurements';
+import type { Point, Trip } from '../../data/ha/measurements';
 import { readSetting } from '../../data/localDatabase';
 import { recordPeriods, periodStart, periodTitles, type RecordPeriod } from '../../data/recordPeriod';
 import { chargeCostTotals, displayedChargeFee } from '../../data/tariff';
@@ -34,6 +38,33 @@ const socText = (soc: number | null | undefined) => soc == null ? '—' : value(
 const tripViews = [['simple', '简洁'], ['thumbnail', '缩略图'], ['cards', '卡片']] as const;
 type TripView = typeof tripViews[number][0];
 const tripMapHeight = 210;
+
+function ChargeAddress({ point, fallback }: { point: Point; fallback: string }) {
+  const { data } = useAmapAddress(mapPoint(point));
+  return <>{data || fallback}</>;
+}
+
+function ChargePlace({ point, detail = false }: { point?: Point; detail?: boolean }) {
+  const { simulated } = useModelContext();
+  const line = useRef<HTMLSpanElement>(null);
+  const [visible, setVisible] = useState(detail);
+  useEffect(() => {
+    if (visible || !line.current || !point || simulated || point.coordinate === 'unknown') return;
+    if (typeof IntersectionObserver === 'undefined') { setVisible(true); return; }
+    const observer = new IntersectionObserver(([entry]) => {
+      if (entry.isIntersecting) { setVisible(true); observer.disconnect(); }
+    });
+    observer.observe(line.current);
+    return () => observer.disconnect();
+  }, [point, simulated, visible]);
+  const coordinates = point ? `${point.lat.toFixed(5)}, ${point.lon.toFixed(5)}` : '暂无定位';
+  return <span className={'charge-place' + (detail ? ' charge-place-detail' : '')} ref={line}>
+    <Icon name="locate" size={detail ? 16 : 12} /><span className={detail ? 'charge-place-label' : 'sr-only'}>充电位置</span>
+    <span className="charge-place-value">{point && point.coordinate !== 'unknown' && visible && !simulated ?
+      <ChargeAddress point={point} fallback={coordinates} /> : coordinates}</span>
+  </span>;
+}
+
 function Badge({ source }: { source: string }) {
   return <span className={'src-badge src-' + (source === 'ha' ? 'ha' : 'phone')}>{source === 'ha' ? 'HA' : source === 'live' ? '零跑云' : '手机'}</span>;
 }
@@ -161,6 +192,11 @@ export function RecordsPage() {
   const phoneCharge = m.simulated ? m.current.charging === 'charging' && { soc: m.current.soc, kwh: 4.2, powerKw: m.current.power } : m.cloudRecords.activeCharge;
   const activeTrip = (m.usesPhone && phoneTrip) || (m.usesHA && m.ha.activeTrip);
   const activeCharge = (m.usesPhone && phoneCharge) || (m.usesHA && !phoneTrip && m.ha.activeCharge);
+  const chargeMetrics: [string, string][] = activeCharge ? [
+    ['实时电量', socText(activeCharge.soc)], ['已充入电量', liveReading(activeCharge.kwh, 'kWh')],
+    ['充电功率', liveReading(activeCharge.powerKw, 'kW')],
+  ] : [];
+  const showChargeInRecorder = !!phoneCharge && m.manualTrip.state?.ownsSampling;
   const period = m.recordPeriod, from = periodStart(period);
   const tomorrow = new Date().setHours(24, 0, 0, 0);
   const trips = useMemo(() => m.records.trips.filter(row => row.startedAt >= from && row.startedAt < tomorrow), [m.records.trips, from, tomorrow]);
@@ -221,7 +257,8 @@ export function RecordsPage() {
       <div className="record-panel" id="record-panel" role="tabpanel" aria-labelledby={'record-tab-' + tab} tabIndex={0}>
         {m.source === 'off' ? <div className="card empty"><b>还没有开启记录</b><Link className="btn accent" to="/records-source">选择数据来源</Link></div> :
           tab === 0 ? <>
-            {activeTrip && <RecordingCard title="正在记录行程" metrics={[
+            <ManualTripCard />
+            {activeTrip && !(m.manualTrip.available && phoneTrip) && <RecordingCard title="正在记录行程" metrics={[
               ['实时车速', liveReading(activeTrip.speedKmh, 'km/h', 0)],
               ['已行驶里程', liveReading(activeTrip.distanceKm, 'km')],
             ]} />}
@@ -230,17 +267,14 @@ export function RecordsPage() {
             {m.ha.rangeLoading && <p className="tiny muted record-summary-note" role="status">正在读取行程历史…</p>}
             {!trips.length && !!m.records.trips.length && <p className="muted record-period-empty">该时段暂无行程记录。</p>}
             {!m.records.trips.length && <EmptyRecords kind="行程" />}
-            <RecordDays key="trips" rows={trips} unit="段" byMonth={period === 'year' || period === 'all'} grid={tripView === 'cards'}
+            <RecordDays key={JSON.stringify([m.tripScope, period])} rows={trips} unit="段" byMonth={period === 'year' || period === 'all'} grid={tripView === 'cards'}
               preview={tripView === 'thumbnail' ? group => ({ map: <TripThumbnail trips={group} mapStyle={mapStyle} daily />,
                 totals: <TripDayTotals trips={group} /> }) : undefined}
               render={trip => <TripListLink key={trip.id} trip={trip} view={tripView} mapStyle={mapStyle}
                 onDelete={m.canDeleteTrip(trip.id) ? () => requestDelete(trip) : undefined} />} />
           </> : <>
-            {activeCharge && <RecordingCard title="正在记录充电" metrics={[
-              ['实时电量', socText(activeCharge.soc)],
-              ['已充入电量', liveReading(activeCharge.kwh, 'kWh')],
-              ['充电功率', liveReading(activeCharge.powerKw, 'kW')],
-            ]} />}
+            <ManualTripCard charging metrics={showChargeInRecorder ? chargeMetrics : undefined} />
+            {activeCharge && !showChargeInRecorder && <RecordingCard title="正在记录充电" metrics={chargeMetrics} />}
             <RecordSummary kind="充电" period={period} select={m.setRecordPeriod} primary={<>
               <div><div className="tiny muted">{periodTitles[period]}充电</div><b className="num record-total">{charges.length} 次 · {measured.length && measured.length < charges.length ? '已知 ' : ''}{measured.length ? value(kwh, 1) : '—'} kWh</b></div>
               <div><div className="tiny muted">有数据的平均单次</div><b className="num">{measured.length ? value(kwh / measured.length, 1) : '—'} kWh</b></div>
@@ -259,6 +293,7 @@ export function RecordsPage() {
               {tripView !== 'simple' && <ChargeThumbnail charge={row} />}
               <span className="trip-time">{clock(row.startedAt)}<small>→ {row.active ? '充电中' : clock(row.endedAt)}</small></span>
               <span className="trip-main"><b className="num">{value(row.kwh, 1)} kWh</b><small>{types[row.type]}</small>
+                {m.canSee('location') && <ChargePlace point={row.position} />}
                 <small className="charge-estimate">{fee.amount === null ? '预估费用 —' : <>
                   {manual === undefined ? '约 ' : '实付 '}{costText(fee.amount)}{fee.unitPrice != null && ' · ' + fee.unitPrice.toFixed(2) + ' 元/kWh'}</>}</small></span>
               <Badge source={row.source} />{tripView !== 'cards' && <Icon name="chevron" size={15} />}</Link>;
@@ -281,7 +316,7 @@ function RecordMonth({ month, count, unit, children }: { month: string; count: n
   </section>;
 }
 
-function RecordDay({ summary, renderItems, lazy }: { summary: ReactNode; renderItems: () => ReactNode; lazy: boolean }) {
+function RecordDay({ summary, renderItems, lazy, initiallyOpen }: { summary: ReactNode; renderItems: () => ReactNode; lazy: boolean; initiallyOpen: boolean }) {
   const details = useRef<HTMLDetailsElement>(null);
   const body = useRef<HTMLDivElement>(null);
   const motion = useRef<Animation | null>(null);
@@ -311,7 +346,7 @@ function RecordDay({ summary, renderItems, lazy }: { summary: ReactNode; renderI
       motion.current = null;
     };
   }
-  return <details className="record-fold record-day" ref={details} onToggle={event => { if (event.currentTarget.open) setVisited(true); }}>
+  return <details className="record-fold record-day" ref={details} open={initiallyOpen} onToggle={event => { if (event.currentTarget.open) setVisited(true); }}>
     <summary className="trip-day record-fold-toggle" onClick={toggle}>{summary}</summary>
     <div className="record-day-items" ref={body}>{(!lazy || visited) && renderItems()}</div>
   </details>;
@@ -328,6 +363,7 @@ function RecordDays<T extends { startedAt: number }>({ rows, unit, render, byMon
     else days.set(day, [row]);
   }
   const today = localDay(Date.now());
+  const orderedDays = [...days].sort(([a], [b]) => b.localeCompare(a));
   function renderDay([day, group]: [string, T[]]) {
     const dateLabel = day === today ? '今天' : day;
     const renderItems = () => grid ? <div className="trip-grid">{group.map(render)}</div> : group.map(render);
@@ -336,11 +372,10 @@ function RecordDays<T extends { startedAt: number }>({ rows, unit, render, byMon
       {renderItems()}
     </section>;
     const visual = preview?.(group);
-    return <RecordDay key={day} lazy={byMonth} summary={<>{visual?.map}<div className="trip-day-heading">
+    return <RecordDay key={day} lazy={byMonth} initiallyOpen={!byMonth && day === orderedDays[0][0]} summary={<>{visual?.map}<div className="trip-day-heading">
         <b>{dateLabel}</b>{visual?.totals}</div><span>{group.length} {unit}</span><Icon name="chevron" size={14} />
       </>} renderItems={renderItems} />;
   }
-  const orderedDays = [...days].sort(([a], [b]) => b.localeCompare(a));
   if (!byMonth) return orderedDays.map(renderDay);
   const months = new Map<string, [string, T[]][]>();
   for (const entry of orderedDays) {
@@ -362,7 +397,7 @@ function EmptyRecords({ kind }: { kind: string }) {
   const title = loading ? `正在同步${kind}记录…` : unavailable ? `${kind}记录暂不可用` : `暂无${kind}记录`;
   return <div className="card empty"><div className="confirm-ic"><Icon name={kind === '行程' ? 'route' : 'plug'} /></div><b>{title}</b>
     {!loading && <p className="tiny muted">{ha ? unavailable ? '可在 HA 同步设置中重试并查看同步状态。' : '当前同步范围内没有可用记录。' :
-      cloud ? '行程来自零跑云车况采样。可在记录设置中开启后台轮询。' : '手机记录需要登录零跑账号。'}</p>}
+      cloud && supportsManualTrips() ? '开始记录后，车辆行驶时会生成路段。' : cloud ? '行程来自零跑云车况采样。可在记录设置中开启后台轮询。' : '手机记录需要登录零跑账号。'}</p>}
     <Link className="btn secondary sm" to={m.source === 'ha' ? '/ha' : cloud ? '/records-source' : '/background-guide'}>{m.source === 'ha' ? '同步设置' : cloud ? '记录设置' : '手机记录设置'}</Link></div>;
 }
 
@@ -389,6 +424,9 @@ export function TariffSheet({ close }: { close: () => void }) {
     if (count.some(v => v !== 1)) { setIssue('直流时段须覆盖全天且互不重叠。'); return; }
     m.setTariff(draft); close();
   }
+  function updatePeriod(index: number, fields: Partial<typeof draft.dc.periods[number]>) {
+    setDraft({ ...draft, dc: { ...draft.dc, periods: draft.dc.periods.map((row, i) => i === index ? { ...row, ...fields } : row) } });
+  }
   return <Sheet title="电价设置" sub="交流峰谷 · 直流分时" close={close} showClose className="tariff-sheet">
     <div className="tariff-section"><b>交流慢充</b><div className="tariff-grid">
       {([['peak', '峰电价 · 元/kWh'], ['valley', '谷电价 · 元/kWh'], ['efficiency', '交流效率 %']] as const)
@@ -396,16 +434,14 @@ export function TariffSheet({ close }: { close: () => void }) {
         <input type="number" step="0.01" min={key === 'efficiency' ? 50 : 0} value={Number.isFinite(draft.ac[key]) ? draft.ac[key] : ''}
           onChange={e => setDraft({ ...draft, ac: { ...draft.ac, [key]: e.target.valueAsNumber } })} /></label>)}
       {([['valleyStart', '谷电开始'], ['valleyEnd', '谷电结束']] as const).map(([key, label]) => <label key={key}>{label}
-        <input type="time" value={draft.ac[key]} onChange={e => setDraft({ ...draft, ac: { ...draft.ac, [key]: e.target.value } })} /></label>)}
+        <TimePicker aria-label={label} value={draft.ac[key]} onValue={v => setDraft({ ...draft, ac: { ...draft.ac, [key]: v } })} /></label>)}
     </div></div>
     <div className="tariff-section"><b>直流快充</b><p className="tiny muted">时段须覆盖全天且互不重叠。</p>
       {draft.dc.periods.map((row, i) => <div className="period-row" key={i}>
-        {(['start', 'end', 'price'] as const).map(key => <input type={key === 'price' ? 'number' : 'time'} min="0" step={key === 'price' ? '0.01' : undefined} key={key}
-          aria-label={'时段 ' + (i + 1) + ({ start: ' 开始', end: ' 结束', price: ' 单价' }[key])}
-          value={key === 'price' && !Number.isFinite(row.price) ? '' : row[key]} onChange={e => {
-            const periods = draft.dc.periods.map((p, ix) => ix === i ? { ...p, [key]: key === 'price' ? e.target.valueAsNumber : e.target.value } : p);
-            setDraft({ ...draft, dc: { ...draft.dc, periods } });
-          }} />)}
+        {(['start', 'end'] as const).map(key => <TimePicker key={key} aria-label={'时段 ' + (i + 1) + (key === 'start' ? ' 开始' : ' 结束')}
+          value={row[key]} onValue={value => updatePeriod(i, { [key]: value })} />)}
+        <input type="number" min="0" step="0.01" aria-label={'时段 ' + (i + 1) + ' 单价'}
+          value={Number.isFinite(row.price) ? row.price : ''} onChange={e => updatePeriod(i, { price: e.target.valueAsNumber })} />
         <button className="del-period" aria-label="删除时段" onClick={() => setDraft({ ...draft, dc: { ...draft.dc, periods: draft.dc.periods.filter((_, ix) => ix !== i) } })}>×</button>
       </div>)}
       <button className="link" onClick={() => setDraft({ ...draft, dc: { ...draft.dc, periods: [...draft.dc.periods, { start: '00:00', end: '01:00', price: 0 }] } })}>+ 添加时段</button>
@@ -510,6 +546,7 @@ export function ChargeDetail({ restoringSession = false }: { restoringSession?: 
           { icon: 'battery', label: charge?.active ? '当前电量' : '结束电量', reading: value(charge?.socEnd, 1), unit: '%' },
         ]} />
       </div>
+      {charge && m.canSee('location') && <div className="card trip-info"><ChargePlace detail point={charge.position} /></div>}
       <div className="card trip-info"><DetailMetrics items={[
         { icon: 'wallet', label: manual !== undefined ? '本次实付电费' : '本次预估电费', reading: value(fee?.amount, 2), unit: '元' },
         { icon: 'plug', label: '估算取电', reading: value(fee?.gridKwh, 1), unit: 'kWh' },
@@ -544,6 +581,7 @@ export function RecordsSource() {
   const [busy, setBusy] = useState(false);
   const [selection, setSelection] = useState(false);
   const [exportOpen, setExportOpen] = useState(false);
+  const ios = Capacitor.getPlatform() === 'ios';
   const defaultSource = m.mode === 'ha' ? 'ha' : defaultRecordSource;
   return <><AppBar title="记录与数据源" back="/records" sub="行程与充电记录的来源" /><div className="page no-nav">
     <Section title="选择数据源">{sources.filter(([key]) => key !== 'hybrid' || m.mode !== 'ha').map(([key, label, note]) => {
@@ -552,9 +590,9 @@ export function RecordsSource() {
         onClick={() => { m.setSource(key); if (key === 'ha' || key === 'hybrid' && m.mode === 'cloud' && !m.ha.connected) navigate('/ha'); }}>
         <span className="radio" /><span className="so-body"><b>{label}</b><small>{note}</small></span>{badge && <span className="pill">{badge}</span>}</button>;
     })}</Section>
-    {m.usesPhone && <Section title="后台常驻"><p className="tiny muted">{m.background.active ? '后台车况轮询已启动' :
-      m.mode !== 'cloud' ? '登录零跑账号后可采集车辆上报。' : m.background.supported ? '开启后，应用退到后台也会查询车况。' : '此平台在应用前台时查询车况。'}</p>
-      <Link className="btn secondary sm" to="/background-guide">打开后台常驻设置</Link></Section>}
+    {m.usesPhone && <Section title={ios ? '后台记录' : '后台常驻'}><p className="tiny muted">{m.background.active ? '后台车况轮询已启动' :
+      m.mode !== 'cloud' ? '登录零跑账号后可采集车辆上报。' : supportsManualTrips() ? '在行程或充电页开始记录，锁屏后可继续采样。' : m.background.supported ? '开启后，应用退到后台也会查询车况。' : '此平台在应用前台时查询车况。'}</p>
+      <Link className="btn secondary sm" to="/background-guide">{ios ? '查看 iPhone 后台记录指南' : '打开后台常驻设置'}</Link></Section>}
     {m.usesHA && <Section title="Home Assistant"><p className="tiny muted">{!m.ha.connected || m.ha.expired ? '未连接' :
       m.source === 'hybrid' && m.ha.error ? '等待连接 HA · 手机继续记录' : '已连接'}</p>
       <Link className={m.ha.connected && !m.ha.expired ? 'btn secondary sm' : 'btn accent sm'} to="/ha">{m.ha.connected && !m.ha.expired ? '管理 HA 连接' : '登录 Home Assistant'}</Link></Section>}
@@ -563,6 +601,7 @@ export function RecordsSource() {
         <Row icon="bolt" title="电价设置" sub="交流峰谷 · 直流分时" onClick={() => setSettings({ setting: 'tariff' })} />
       </Section>
       <Section title="数据管理">
+        <p className="tiny muted">旧版无法确认账号归属的删除标记和手工费用不再自动显示，部分已隐藏行程可能重新出现。Home Assistant 历史会重新同步。</p>
         <Row icon="clock" title="同步范围" sub={'Recorder 最近 ' + (m.ha.config?.days ?? 30) + ' 天'} right="修改"
           onClick={() => m.ha.config ? setSelection(true) : navigate('/ha')} />
         <Row icon="file" title="导出记录" label="导出记录" sub="CSV · 脱敏" onClick={() => setExportOpen(true)} disabled={!m.canSee('mileage')} />

@@ -4,7 +4,9 @@ import { useModelContext } from '../context';
 import { authorizeCloud, hasCloudSession, loadCloudSession } from './session';
 import { sendSmsCode } from '../../data/cloud/LiveClient';
 import { randomDeviceId } from '../../data/cloud/liveCrypto';
-import { rememberFailure } from '../../data/readDiagnostics';
+import { failureFacts, loginFailureMessage, type LoginStage } from '../../data/serviceFailure';
+import { recordLoginFailure } from '../../platform/diagnostics';
+import { readSetting } from '../../data/localDatabase';
 import { LocalSessionStorageError } from '../../platform/secure';
 import { AppBar, Hint, Row, Section, Seg, Sheet, SheetButtons, asset, hasLocalCarAssets } from '../../ui/components';
 import { Icon } from '../../ui/Icon';
@@ -45,13 +47,13 @@ export function Login() {
     if (!phoneValid) { setNote('请输入 11 位手机号。'); return; }
     if (!form.agree) { setNote('请先阅读并同意用户协议与隐私说明。'); return; }
     setBusy('sms');
-    device.current ??= randomDeviceId();
     try {
+      device.current ??= randomDeviceId();
       await sendSmsCode(form.phone, device.current);
       setSentTo(form.phone);
       setResend(60);
       setNote('验证码已发送。');
-    } catch (error) { rememberFailure(model.profileScope, 'sms', error); setNote('验证码发送失败，可打开故障诊断检查账号服务连接。'); }
+    } catch (error) { recordLoginFailure(model.profileScope, 'sms', error, 'sms-send'); setNote(loginFailureMessage('sms-send', failureFacts(error))); }
     finally { setBusy(null); }
   }
   async function signIn() {
@@ -59,10 +61,11 @@ export function Login() {
       setNote('请先同意条款，获取并填写短信验证码。'); return;
     }
     setBusy('login');
+    let stage: LoginStage = 'sms-verify';
     try {
-      model.chooseMode('cloud', await authorizeCloud(form.phone, form.code, device.current ?? randomDeviceId()));
+      model.chooseMode('cloud', await authorizeCloud(form.phone, form.code, device.current ?? randomDeviceId(), value => { stage = value; }));
       navigate('/vehicles', { replace: true });
-    } catch (error) { rememberFailure(model.profileScope, 'login', error); setNote(error instanceof LocalSessionStorageError ? error.message : '登录失败，请检查验证码或网络。'); }
+    } catch (error) { recordLoginFailure(model.profileScope, 'login', error, stage); setNote(error instanceof LocalSessionStorageError ? error.message : loginFailureMessage(stage, failureFacts(error))); }
     finally { setBusy(null); }
   }
   async function resumeCloud() {
@@ -137,6 +140,7 @@ export function VehicleList({ manage = false }: { manage?: boolean }) {
   if (capacitySetup && !model.shouldGuideBatterySetup(capacitySetup)) return <Navigate to="/home" replace />;
   return <><AppBar title={manage ? '车辆管理' : '选择车辆'} back={manage ? '/mine' : model.vehicle ? '/home' : '/login'} sub={manage ? '车辆与安全' : '已授权车辆'} />
     <div className="page no-nav">
+      {manage && Object.keys(readSetting<Record<string, string>>('names', {})).length > 0 && <p className="tiny muted">旧版本机车辆名称未记录所属账号，因此不会自动显示，可重新设置。</p>}
       {model.expired || !menu.length || (model.simulated && model.scenario === 'offline') ?
         <Section className="vehicle-empty"><div className="confirm-ic"><Icon name={model.expired ? 'key' : 'car'} size={24} /></div>
           <h2>{model.expired ? '会话已失效' : model.vehiclesError || model.scenario === 'offline' ? '无法加载车辆' : '未找到已授权车辆'}</h2>

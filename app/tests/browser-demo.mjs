@@ -177,6 +177,12 @@ try{
   assert.equal(await b.run('document.body.innerText.includes("车辆定位未授权")'),!(mask&2));
   await page('/energy');
   assert.equal(await b.run('document.body.innerText.includes("里程能耗未授权")'),!(mask&4));
+  if (mask === 4 || mask === 6) {
+    for (const path of ['/records?tab=charges', '/charges/demo-charge-0']) {
+      await page(path);
+      assert.equal(await b.run('!!document.querySelector(".charge-place")'), !!(mask & 2));
+    }
+  }
  }
  await openDemoSettings(); await b.run("Array.from(document.querySelectorAll('.debug-grants input:not(:disabled)')).forEach(x=>x.click())"); await page('/home');
  assert.equal(await b.run('document.querySelector(".hero-actions [aria-label=解锁车门]").disabled'),false);
@@ -208,11 +214,11 @@ try{
  await b.click('.debug-check input'); await page('/home'); assert.match(await b.run('document.body.innerText'),/停车挂 P/);
  assert.equal(await b.run('document.querySelector(".hero-actions [aria-label=上锁车门]").disabled'),true);
  await openDemoSettings(); await b.click('.debug-check input');
- await b.run(`(()=>{const e=document.querySelector('[aria-label=数据状态]');e.value='pending';e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+ await b.click('[aria-label=数据状态]'); await b.click('dialog[open] [data-value=pending]');
  await page('/home');await b.click('.hero-actions [aria-label=上锁车门]');await click('确认发送');
  await commandStatus('车辆未确认');await click('关闭');
  await openDemoSettings();
- await b.run(`(()=>{const e=document.querySelector('[aria-label=数据状态]');e.value='normal';e.dispatchEvent(new Event('change',{bubbles:true}));})()`);
+ await b.click('[aria-label=数据状态]'); await b.click('dialog[open] [data-value=normal]');
  await openDemoSettings(); await b.run("Array.from(document.querySelectorAll('.debug-grants input:not(:disabled)')).forEach(x=>x.click())");
  await page('/energy'); let rect=await b.run('(()=>{const r=document.querySelector(".energy-plot").getBoundingClientRect();return {x:r.left+30,y:r.top+50,width:r.width}})()');
  await b.send('Input.dispatchMouseEvent',{type:'mousePressed',x:rect.x,y:rect.y,button:'left',buttons:1,clickCount:1});

@@ -7,7 +7,7 @@ import { haChargeSessions, haOlderChargeSessions, haTripHistory, ledgerKeys, rea
 import { periodStart, type RecordPeriod } from './recordPeriod';
 import { chargeWindowStart } from './tariff';
 import { candidateVehicles, discoverVehicles, normalizedVin, permittedFields, targetVin, vehicleByVin } from './ha/discovery';
-import { framesOf, numberOf } from './ha/measurements';
+import { framesOf, numberOf, withChargePositions } from './ha/measurements';
 import { entityIdOf, HA_KEY, samplesOf } from './ha/schema';
 import { secureGet, secureRemove, secureSet } from '../platform/secure';
 import { NetworkError } from '../platform/network';
@@ -26,19 +26,23 @@ function mergeHistory<T extends { id: string; startedAt: number }>(older: T[], r
 export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage, enabled, viewingRecords, viewingCharging, recordPeriod, recordTab, suspended }: HATarget) {
   const qc = useQueryClient();
   const [config, setConfig] = useSetting<HAConfig | null>('haSettings', null);
-  const [legacyArchiveIds] = useSetting<Record<string, string>>('archiveMapping', {});
-  const [selectedCars, setSelectedCars] = useSetting<Record<string, string>>('haSelectedCars', {});
-  const [bindings, setBindings] = useSetting<Record<string, Binding>>('haAutoBindings', {});
+  const [selectedCars, setSelectedCars] = useSetting<Record<string, string>>('haSelectedCars.v2', {});
+  const [bindings, setBindings] = useSetting<Record<string, Binding>>('haAutoBindings.v2', {});
   const [ready, setReady] = useState(false);
   const [hasToken, setHasToken] = useState(false);
+  useEffect(() => {
+    if (ready && hasToken && config && !config.localScope) {
+      setConfig(current => current && !current.localScope ? { ...current, localScope: crypto.randomUUID() } : current);
+    }
+  }, [ready, hasToken, config, setConfig]);
   useEffect(() => {
     if (suspended) return;
     secureGet<Token>(HA_KEY).then(token => setHasToken(!!token)).catch(() => {}).finally(() => setReady(true));
   }, [suspended]);
   const url = config?.url ?? '';
-  const bindingKey = JSON.stringify([url, vehicleId]);
+  const bindingKey = JSON.stringify([config?.localScope, url, vehicleId]);
   const cachedBinding = bindings[bindingKey];
-  const active = ready && hasToken && !!config;
+  const active = ready && hasToken && !!config?.localScope;
   const refreshInterval = enabled && config?.auto ? 30_000 : false;
   const liveInterval = viewingRecords && mileage && refreshInterval;
   const retry = (count: number, error: unknown) => count < 2 && !(error instanceof NetworkError && [401, 403].includes(error.status));
@@ -61,9 +65,8 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
   const discovered = useMemo(() => registry.data && states.data ? discoverVehicles(registry.data.entries, registry.data.catalog, states.data) : [],
     [registry.data, states.data]);
   const candidates = candidateVehicles(discovered, [...(registry.data?.catalog ?? []), ...(archivesAvailable ?? [])]);
-  const legacyArchive = legacyArchiveIds[url + ':' + vehicleId];
-  const legacyVin = archivesAvailable?.find(row => row.vehicle_id === legacyArchive)?.vin;
-  const selectedVin = selectedCars[url] || legacyVin || '';
+  const selectionKey = JSON.stringify([config?.localScope, url]);
+  const selectedVin = selectedCars[selectionKey] || '';
   const canChooseDefault = !!registry.data && (registry.data.catalog.length > 0 ||
     registry.data.registryReadable && !!states.data && (!mileage || !archives.isPending));
   const liveVin = standalone && !selectedVin && !canChooseDefault ? '' : targetVin(candidates, cloudVin, standalone, selectedVin);
@@ -147,9 +150,10 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
     const earlierTrips = moreTrips && historyTrips.data?.filter(row => !haveSync || row.startedAt < tripBoundary);
     const earlierCharges = extendCharges && recentCharges.data?.filter(row => !haveSync || row.startedAt < syncChargeStart);
     const archive = moreCharges && olderCharges.data?.charges;
+    const charges = earlierCharges || archive ? mergeHistory([...(archive || []), ...(earlierCharges || [])], synced.charges) : synced.charges;
     return { trips: earlierTrips ? mergeHistory(earlierTrips, synced.trips) : synced.trips,
-      charges: earlierCharges || archive ? mergeHistory([...(archive || []), ...(earlierCharges || [])], synced.charges) : synced.charges };
-  }, [synced, syncTripStart, syncChargeStart, moreTrips, extendCharges, moreCharges, historyTrips.data, recentCharges.data, olderCharges.data]);
+      charges: location ? withChargePositions(charges, frames) : charges };
+  }, [synced, syncTripStart, syncChargeStart, moreTrips, extendCharges, moreCharges, historyTrips.data, recentCharges.data, olderCharges.data, location, frames]);
   const rangePartial = moreTrips && historyTrips.isError || extendCharges && recentCharges.isError ||
     moreCharges && (olderCharges.isError || olderCharges.data && olderCharges.data.coverage !== 'complete');
   const rangeLoading = moreTrips && historyTrips.isFetching || extendCharges && recentCharges.isFetching || moreCharges && olderCharges.isFetching;
@@ -167,11 +171,15 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
 
   async function connect(url: string, token: Token, auth: HAConfig['auth']) {
     await testConnection(url, token);
+    const previous = await secureGet<Token>(HA_KEY);
+    const sameAuthorization = config?.url === url && !!previous &&
+      (previous.access === token.access || !!previous.refresh && previous.refresh === token.refresh);
     await qc.cancelQueries({ queryKey: ['ha'] });
     invalidateHAWork();
     await secureSet(HA_KEY, token);
     qc.removeQueries({ queryKey: ['ha'] });
-    setConfig(config?.url === url ? { ...config, auth } : { url, mappings: {}, days: 30, auto: true, auth });
+    const localScope = sameAuthorization && config?.localScope ? config.localScope : crypto.randomUUID();
+    setConfig(config?.url === url ? { ...config, auth, localScope } : { url, mappings: {}, days: 30, auto: true, auth, localScope });
     setHasToken(true);
   }
   async function disconnect() {
@@ -189,7 +197,7 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
       await deleteDataset(historyKey(config, vehicleId));
       const cacheVin = vin || cachedBinding?.vin;
       if (cacheVin) await Promise.all([historyKey(config, vehicleId, cacheVin), ...ledgerKeys(config, cacheVin)].map(deleteDataset));
-      const linkedId = archiveId || cachedBinding?.archiveId || legacyArchive;
+      const linkedId = archiveId || cachedBinding?.archiveId;
       if (linkedId) {
         const pointer = archivePointer(config, linkedId);
         const archiveKey = await readDataset<string>(pointer);
@@ -217,7 +225,7 @@ export function useHA({ vehicleId, cloudVin = '', standalone, location, mileage,
   const error = states.error;
   return {
     config, setConfig, ready, connected: active, hasToken, connect, disconnect, clearHistory, refresh, vin, candidates, fields,
-    selectVehicle: (vin: string) => setSelectedCars(cars => ({ ...cars, [url]: vin })),
+    selectVehicle: (vin: string) => setSelectedCars(cars => ({ ...cars, [selectionKey]: vin })),
     frames, records, currentReading, batteryTemperature, batteryEntity,
     rangePartial, rangeLoading, activeTrip, activeCharge, recordSyncing, ledgerSyncing: ledger.isFetching, identifying, tripUnavailable, chargeUnavailable,
     restoringTrips: restoringRecords || moreTrips && historyTrips.isLoading,

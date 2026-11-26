@@ -29,7 +29,7 @@ cd android
 
 ## iOS
 
-准备 Xcode 和 iOS SDK，并安装 Ruby 的 `xcodeproj` gem。执行 `pnpm native:ios` 后，用 Xcode 打开 `app/ios/App/App.xcodeproj`。为 App 和桌面卡片扩展选择同一签名团队及可用的 App Group，再编译安装。默认 App Group 为 `group.com.leapmore.app`。个人团队构建时可按自己的签名配置调整 Bundle ID 和 App Group。
+准备 Xcode 26 或以上版本、iOS 26 或以上 SDK，并安装 Ruby 的 `xcodeproj` gem。执行 `pnpm native:ios` 后，用 Xcode 打开 `app/ios/App/App.xcodeproj`。为 App 和桌面卡片扩展选择同一签名团队及可用的 App Group，再编译安装。默认 App Group 为 `group.com.leapmore.app`。个人团队构建时可按自己的签名配置调整 Bundle ID 和 App Group。
 
 执行 `pnpm package:ios` 生成一个真机侧载包 `ios/build/LeapMore-v<版本>-ios.ipa`。该文件带有临时签名，保留主应用与桌面小组件共享车况所需的 App Group。GitHub Actions 的「iOS IPA」工作流在版本标签或手动运行时提供同一份产物。
 
@@ -37,7 +37,14 @@ cd android
 
 ## 鸿蒙
 
-准备 DevEco Studio 与支持 API 26 的 HarmonyOS SDK。按 [OpenHarmony Capacitor 适配器](https://gitcode.com/CPF-Ionic/openHarmony-capacitor)的说明准备 [OpenSSL](https://gitcode.com/li_in/openharmony-capacitor-openssl3.5)。如果 SDK 适配器需要 OpenSSL 文件，将 `LEAPMORE_OHOS_OPENSSL_DIR` 设置为其目录。执行 `pnpm native:harmony` 后，在 DevEco Studio 打开生成的 `app/openharmony` 工程，安装模块依赖并构建 HAP。
+准备 DevEco Studio、支持 API 26 的 HarmonyOS SDK 和 [OpenSSL 3.5.4 官方源码包](https://github.com/openssl/openssl/releases/tag/openssl-3.5.4)。在 `app/` 执行以下命令生成 arm64 与 x86_64 两种架构的库；脚本会先校验源码包的 SHA-256。库输出目录须为新目录，已有构建可复用。
+
+```sh
+sh scripts/build-harmony-openssl.sh /path/to/openssl-3.5.4.tar.gz /path/to/ohos-openssl
+LEAPMORE_OHOS_OPENSSL_DIR=/path/to/ohos-openssl pnpm native:harmony
+```
+
+在 DevEco Studio 打开生成的 `app/openharmony` 工程，安装模块依赖，以 release 模式构建 HAP。分发前从 `app/` 执行 `node scripts/harmony-release-paths.mjs /path/to/release.hap`，检查安装包是否带有构建机的个人目录路径。
 
 ## 构建选项
 
