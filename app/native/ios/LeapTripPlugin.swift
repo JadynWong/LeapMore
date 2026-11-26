@@ -6,7 +6,7 @@ import Foundation
 final class LeapTripPlugin: CAPPlugin, CAPBridgedPlugin {
     let identifier = "LeapTripPlugin"
     let jsName = "LeapTrip"
-    let pluginMethods = ["configure", "reading", "state", "start", "stop", "batch", "ack", "clear"].map {
+    let pluginMethods: [CAPPluginMethod] = ["configure", "reading", "state", "start", "stop", "batch", "ack", "clear"].map {
         CAPPluginMethod(name: $0, returnType: CAPPluginReturnPromise)
     }
 
